@@ -1,6 +1,6 @@
 [package]
 name = "cli"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 license = "AGPL-3.0"
 
@@ -16,7 +16,7 @@ members = ["madevent"]
 [profile.dev]
 opt-level = 1
 
-[profile.dev.package."*"]
+[profile.dev.package.'*']
 opt-level = 3
 
 [profile.release]
@@ -24,4 +24,3 @@ codegen-units = 1
 panic = "abort"
 ito = true
 strip = true
-
