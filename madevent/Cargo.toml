@@ -1,0 +1,10 @@
+[package]
+name = "madevent"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0"
+description = "Client for madevent"
+repository = "https://github.com/timayz/madevent"
+homepage = "https://madevent.timada.co"
+
+[dependencies]
