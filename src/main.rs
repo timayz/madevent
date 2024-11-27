@@ -1,5 +1,6 @@
 use clap::{arg, Command};
 use std::str::FromStr;
+use tracing::error;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[tokio::main]
@@ -27,8 +28,8 @@ async fn main() {
         .init();
 
     match matches.subcommand() {
-        Some(("serve", sub_matches)) => {
-            println!("{log}");
+        Some(("serve", _sub_matches)) => {
+            error!("{log}");
         }
         _ => unreachable!(),
     }
