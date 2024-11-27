@@ -29,7 +29,7 @@ async fn main() {
 
     match matches.subcommand() {
         Some(("serve", _sub_matches)) => {
-            error!("{log}");
+            error!("{log} roli");
         }
         _ => unreachable!(),
     }
