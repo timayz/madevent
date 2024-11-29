@@ -22,5 +22,5 @@ opt-level = 3
 [profile.release]
 codegen-units = 1
 panic = "abort"
-ito = true
+lto = true
 strip = true

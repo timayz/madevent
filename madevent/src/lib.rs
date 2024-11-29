@@ -1,5 +1,10 @@
-use futures::stream::{self, Stream};
+mod sender;
+
+use futures::{stream, Stream};
 use serde::Serialize;
+use ulid::Ulid;
+
+pub use sender::{Event, Sender};
 
 pub struct MadEvent;
 
@@ -8,7 +13,7 @@ impl MadEvent {
         &self,
         _aggregate_id: impl Into<String>,
         _first: u16,
-        _after: Option<Cursor>,
+        _after: Option<Ulid>,
     ) -> impl Stream<Item = Event> {
         stream::iter(vec![])
     }
@@ -43,27 +48,16 @@ impl MadEvent {
     }
 }
 
-pub struct Sender;
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt;
+    use super::*;
 
-impl Sender {
-    pub fn event(self, _name: impl Into<String>, _data: impl Serialize) -> Self {
-        todo!()
-    }
+    #[tokio::test]
+    async fn read() {
+        let madevt = MadEvent {};
 
-    pub fn event_with_metadata(
-        self,
-        _name: impl Into<String>,
-        _data: impl Serialize,
-        _metadata: impl Serialize,
-    ) -> Self {
-        todo!()
-    }
-
-    pub async fn send(&self) -> Vec<SenderEvent> {
-        todo!()
+        let mut reader = madevt.read("test-1", 1, None).await;
+        assert_eq!(reader.next().await, None);
     }
 }
-
-pub struct Event;
-pub struct SenderEvent;
-pub struct Cursor;
