@@ -50,8 +50,8 @@ impl MadEvent {
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
     use super::*;
+    use futures::StreamExt;
 
     #[tokio::test]
     async fn read() {
