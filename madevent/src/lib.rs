@@ -4,7 +4,7 @@ use serde::Serialize;
 pub struct MadEvent;
 
 impl MadEvent {
-    pub fn read(
+    pub async fn read(
         &self,
         _aggregate_id: impl Into<String>,
         _first: u16,
@@ -13,32 +13,33 @@ impl MadEvent {
         stream::iter(vec![])
     }
 
-    pub fn event(_name: impl Into<String>, _data: impl Serialize) -> Sender {
+    pub async fn stream(&self, _filter: impl Into<String>) -> impl Stream<Item = Event> {
+        stream::iter(vec![])
+    }
+
+    pub async fn stream_all(&self, _filter: impl Into<String>) -> impl Stream<Item = Event> {
+        stream::iter(vec![])
+    }
+
+    pub async fn stream_on_fly(&self, _filter: impl Into<String>) -> impl Stream<Item = Event> {
+        stream::iter(vec![])
+    }
+
+    pub async fn stream_key_on_fly(&self, _filter: impl Into<String>) -> impl Stream<Item = Event> {
+        stream::iter(vec![])
+    }
+
+    pub fn event(&self, _name: impl Into<String>, _data: impl Serialize) -> Sender {
         todo!()
     }
 
     pub fn event_with_metadata(
+        &self,
         _name: impl Into<String>,
         _data: impl Serialize,
         _metadata: impl Serialize,
     ) -> Sender {
         todo!()
-    }
-
-    pub fn stream(_filter: impl Into<String>) -> impl Stream<Item = Event> {
-        stream::iter(vec![])
-    }
-
-    pub fn stream_all(_filter: impl Into<String>) -> impl Stream<Item = Event> {
-        stream::iter(vec![])
-    }
-
-    pub fn stream_on_fly(_filter: impl Into<String>) -> impl Stream<Item = Event> {
-        stream::iter(vec![])
-    }
-
-    pub fn stream_key_on_fly(_filter: impl Into<String>) -> impl Stream<Item = Event> {
-        stream::iter(vec![])
     }
 }
 
@@ -50,6 +51,7 @@ impl Sender {
     }
 
     pub fn event_with_metadata(
+        self,
         _name: impl Into<String>,
         _data: impl Serialize,
         _metadata: impl Serialize,
@@ -57,7 +59,7 @@ impl Sender {
         todo!()
     }
 
-    pub fn send() -> Vec<SenderEvent> {
+    pub async fn send(&self) -> Vec<SenderEvent> {
         todo!()
     }
 }
