@@ -5,7 +5,7 @@ lint:
 	cargo clippy --fix --all-features -- -D warnings
 
 test:
-	cargo test
+	cargo test --all
 
 fmt:
 	cargo fmt -- --emit files
