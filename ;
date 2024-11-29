@@ -4,12 +4,7 @@ use serde::Serialize;
 pub struct MadEvent;
 
 impl MadEvent {
-    pub fn read(
-        &self,
-        _aggregate_id: impl Into<String>,
-        _first: u16,
-        _after: Option<Cursor>,
-    ) -> impl Stream<Item = Event> {
+    pub fn read() -> impl Stream<Item = Event> {
         stream::iter(vec![])
     }
 
@@ -57,11 +52,8 @@ impl Sender {
         todo!()
     }
 
-    pub fn send() -> Vec<SenderEvent> {
-        todo!()
-    }
+    pub fn send() {}
 }
 
 pub struct Event;
-pub struct SenderEvent;
-pub struct Cursor;
+
