@@ -1,7 +1,6 @@
 mod sender;
 
 use futures::{stream, Stream};
-use serde::Serialize;
 use ulid::Ulid;
 
 pub use sender::{Event, Sender};
@@ -34,16 +33,7 @@ impl MadEvent {
         stream::iter(vec![])
     }
 
-    pub fn event(&self, _name: impl Into<String>, _data: impl Serialize) -> Sender {
-        todo!()
-    }
-
-    pub fn event_with_metadata(
-        &self,
-        _name: impl Into<String>,
-        _data: impl Serialize,
-        _metadata: impl Serialize,
-    ) -> Sender {
+    pub fn aggregate(&self, _key: impl Into<String>) -> Sender {
         todo!()
     }
 }
