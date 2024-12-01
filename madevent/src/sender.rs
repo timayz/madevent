@@ -221,24 +221,22 @@ mod tests {
         let metadata: Metadata = rmp_serde::from_slice(&event_1.metadata.unwrap()).unwrap();
 
         assert_eq!(
-            events[0].data,
-            rmp_serde::to_vec(&Created {
+            rmp_serde::from_slice::<Created>(&events[0].data).unwrap(),
+            Created {
                 name: format!("Product {}", metadata.key)
-            })
-            .unwrap()
+            }
         );
 
         assert_eq!(
-            events[2].data,
-            rmp_serde::to_vec(&ThumbnailChanged {
+            rmp_serde::from_slice::<ThumbnailChanged>(&events[2].data).unwrap(),
+            ThumbnailChanged {
                 thumbnail: format!("product_{}.png", metadata.key),
-            })
-            .unwrap()
+            }
         );
 
         assert_eq!(
-            events[3].data,
-            rmp_serde::to_vec(&Edited {
+            rmp_serde::from_slice::<Edited>(&events[3].data).unwrap(),
+            Edited {
                 name: format!("Kit Ring Alarm XL {}", metadata.key),
                 description:
                     "Connected wireless home alarm, security system with assisted monitoring"
@@ -247,13 +245,12 @@ mod tests {
                 visible: true,
                 stock: 100,
                 price: 309.99,
-            })
-            .unwrap()
+            }
         );
 
         assert_eq!(
-            events[4].metadata,
-            Some(rmp_serde::encode::to_vec(&Metadata { key: metadata.key }).unwrap())
+            rmp_serde::from_slice::<Metadata>(&events[4].metadata.clone().unwrap()).unwrap(),
+            Metadata { key: metadata.key }
         );
     }
 
@@ -307,17 +304,17 @@ mod tests {
         pool
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Created {
         pub name: String,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Deleted {
         pub deleted: bool,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Edited {
         pub name: String,
         pub description: String,
@@ -327,17 +324,17 @@ mod tests {
         pub price: f32,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct VisibilityChanged {
         pub visible: bool,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct ThumbnailChanged {
         pub thumbnail: String,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Metadata {
         pub key: i32,
     }
