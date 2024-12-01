@@ -248,6 +248,9 @@ mod tests {
             }
         );
 
+        println!("{:?}", events[3]);
+        println!("{:?}", events[4]);
+
         assert_eq!(
             rmp_serde::from_slice::<Metadata>(&events[4].metadata.clone().unwrap()).unwrap(),
             Metadata { key: metadata.key }
