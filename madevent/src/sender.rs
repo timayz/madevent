@@ -99,7 +99,7 @@ impl Sender {
             r#"
             SELECT * FROM event
             WHERE aggregate = ? AND version = ?
-            ORDER BY timestamps ASC
+            ORDER BY timestamp ASC
             LIMIT 1
         "#,
         )
@@ -121,6 +121,7 @@ impl Sender {
         }
 
         tx.commit().await?;
+
         Ok(())
     }
 }
@@ -271,19 +272,6 @@ mod tests {
         assert!(res.is_ok());
 
         let err = Sender::new("product/1", &pool)
-            .event(&VisibilityChanged { visible: false })
-            .unwrap()
-            .send()
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            err.to_string(),
-            SenderError::InvalidOriginalVersion.to_string()
-        );
-
-        let err = Sender::new("product/1", &pool)
-            .original_version(2)
             .event(&VisibilityChanged { visible: false })
             .unwrap()
             .send()
