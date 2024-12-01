@@ -1,23 +1,30 @@
-use clap::{arg, Command};
+use clap::{arg, Parser, Subcommand};
 use std::str::FromStr;
-use tracing::error;
+use tracing::info;
 use tracing_subscriber::{prelude::*, EnvFilter};
+
+#[derive(Debug, Parser)]
+#[command(name = env!("CARGO_PKG_NAME"))]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(arg_required_else_help = true)]
+struct Cli {
+    #[arg(long, default_value = "error")]
+    log: String,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Serve { config: Option<String> },
+}
 
 #[tokio::main]
 async fn main() {
-    let matches = Command::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .arg_required_else_help(true)
-        .arg(arg!(--log <LOG>).default_value("error"))
-        .subcommand(Command::new("serve").arg(arg!(--config <CONFIG>)))
-        .get_matches();
+    let args = Cli::parse();
 
-    let log = matches
-        .get_one::<String>("log")
-        .map(|v| v.as_str())
-        .expect("defaulted in clap");
-
-    let Ok(env_filter) = EnvFilter::from_str(log) else {
+    let Ok(env_filter) = EnvFilter::from_str(&args.log) else {
         println!("invalid value for log arg");
         std::process::exit(1);
     };
@@ -27,10 +34,9 @@ async fn main() {
         .with(env_filter)
         .init();
 
-    match matches.subcommand() {
-        Some(("serve", _sub_matches)) => {
-            error!("{log}");
+    match args.command {
+        Commands::Serve { config } => {
+            info!("{config:?}");
         }
-        _ => unreachable!(),
     }
 }
