@@ -29,7 +29,10 @@ impl Sender {
         self
     }
 
-    pub fn event<D>(self, data: &D) -> std::result::Result<Self, rmp_serde::encode::Error>
+    pub fn event<D>(
+        self,
+        data: &D,
+    ) -> std::result::Result<Self, ciborium::ser::Error<std::io::Error>>
     where
         D: ?Sized + Serialize,
     {
@@ -40,7 +43,7 @@ impl Sender {
         self,
         data: &D,
         metadata: &M,
-    ) -> std::result::Result<Self, rmp_serde::encode::Error>
+    ) -> std::result::Result<Self, ciborium::ser::Error<std::io::Error>>
     where
         D: ?Sized + Serialize,
         M: ?Sized + Serialize,
@@ -52,21 +55,24 @@ impl Sender {
         mut self,
         data: &D,
         metadata: Option<&M>,
-    ) -> std::result::Result<Self, rmp_serde::encode::Error>
+    ) -> std::result::Result<Self, ciborium::ser::Error<std::io::Error>>
     where
         D: ?Sized + Serialize,
         M: ?Sized + Serialize,
     {
         let id = Ulid::new().to_string();
         let name = type_name::<D>().to_owned();
-        let data = rmp_serde::to_vec(data)?;
-        let metadata = if let Some(metadata) = metadata {
-            Some(rmp_serde::to_vec(metadata)?)
+        let mut data_encoded = Vec::new();
+        ciborium::into_writer(data, &mut data_encoded)?;
+        let metadata_encoded = if let Some(metadata) = metadata {
+            let mut metadata_encoded = Vec::new();
+            ciborium::into_writer(metadata, &mut metadata_encoded)?;
+            Some(metadata_encoded)
         } else {
             None
         };
 
-        self.events.push((id, name, data, metadata));
+        self.events.push((id, name, data_encoded, metadata_encoded));
 
         Ok(self)
     }
@@ -132,7 +138,7 @@ pub enum SenderError {
     InvalidOriginalVersion,
 
     #[error(transparent)]
-    RmpEncodeSerde(#[from] rmp_serde::encode::Error),
+    Ciborium(#[from] ciborium::ser::Error<String>),
 
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
@@ -218,24 +224,24 @@ mod tests {
         assert_eq!(events.len(), 5);
 
         let event_1 = events.get(1).unwrap().clone();
-        let metadata: Metadata = rmp_serde::from_slice(&event_1.metadata.unwrap()).unwrap();
+        let metadata: Metadata = ciborium::from_reader(&event_1.metadata.unwrap()[..]).unwrap();
 
         assert_eq!(
-            rmp_serde::from_slice::<Created>(&events[0].data).unwrap(),
+            ciborium::from_reader::<Created, _>(&events[0].data[..]).unwrap(),
             Created {
                 name: format!("Product {}", metadata.key)
             }
         );
 
         assert_eq!(
-            rmp_serde::from_slice::<ThumbnailChanged>(&events[2].data).unwrap(),
+            ciborium::from_reader::<ThumbnailChanged, _>(&events[2].data[..]).unwrap(),
             ThumbnailChanged {
                 thumbnail: format!("product_{}.png", metadata.key),
             }
         );
 
         assert_eq!(
-            rmp_serde::from_slice::<Edited>(&events[3].data).unwrap(),
+            ciborium::from_reader::<Edited, _>(&events[3].data[..]).unwrap(),
             Edited {
                 name: format!("Kit Ring Alarm XL {}", metadata.key),
                 description:
@@ -248,14 +254,8 @@ mod tests {
             }
         );
 
-        println!(
-            "{:?}",
-            rmp_serde::from_slice::<Edited>(&events[3].data).unwrap()
-        );
-        println!("{:?}", events[4]);
-
         assert_eq!(
-            rmp_serde::from_slice::<Metadata>(&events[4].metadata.clone().unwrap()).unwrap(),
+            ciborium::from_reader::<Metadata, _>(&events[4].metadata.clone().unwrap()[..]).unwrap(),
             Metadata { key: metadata.key }
         );
     }
