@@ -8,7 +8,7 @@ pub struct Sender {
     pool: SqlitePool,
     aggregate: String,
     original_version: u16,
-    events: Vec<(String, String, Vec<u8>, Option<Vec<u8>>)>,
+    events: Vec<(String, Vec<u8>, Option<Vec<u8>>)>,
 }
 
 impl Sender {
@@ -60,7 +60,6 @@ impl Sender {
         D: ?Sized + Serialize,
         M: ?Sized + Serialize,
     {
-        let id = Ulid::new().to_string();
         let name = type_name::<D>().to_owned();
         let mut data_encoded = Vec::new();
         ciborium::into_writer(data, &mut data_encoded)?;
@@ -72,7 +71,7 @@ impl Sender {
             None
         };
 
-        self.events.push((id, name, data_encoded, metadata_encoded));
+        self.events.push((name, data_encoded, metadata_encoded));
 
         Ok(self)
     }
@@ -84,9 +83,10 @@ impl Sender {
         let mut qb =
             QueryBuilder::new("INSERT INTO event (id, name, aggregate, version, data, metadata) ");
 
-        qb.push_values(&self.events, |mut b, (id, name, data, metadata)| {
+        qb.push_values(&self.events, |mut b, (name, data, metadata)| {
             version += 1;
 
+            let id = Ulid::new().to_string();
             b.push_bind(id)
                 .push_bind(name)
                 .push_bind(self.aggregate.to_owned())
@@ -95,35 +95,16 @@ impl Sender {
                 .push_bind(metadata);
         });
 
-        qb.push("ON CONFLICT (aggregate, version) DO NOTHING")
+        if let Err(e) = qb /*.push("ON CONFLICT (aggregate, version) DO NOTHING")*/
             .build()
             .execute(&mut *tx)
             .await
-            .unwrap();
-
-        let next = sqlx::query_as::<_, Event>(
-            r#"
-            SELECT * FROM event
-            WHERE aggregate = ? AND version = ?
-            ORDER BY timestamp ASC
-            LIMIT 1
-        "#,
-        )
-        .bind(&self.aggregate)
-        .bind(i32::from(self.original_version + 1))
-        .fetch_optional(&mut *tx)
-        .await?;
-
-        let invalid = if let (Some(next), Some(current)) = (next, self.events.first()) {
-            next.id != current.0
-        } else {
-            false
-        };
-
-        if invalid {
-            tx.rollback().await?;
-
-            return Err(SenderError::InvalidOriginalVersion);
+        {
+            if e.to_string().contains("(code: 2067)") {
+                return Err(SenderError::InvalidOriginalVersion);
+            } else {
+                return Err(e.into());
+            }
         }
 
         tx.commit().await?;
@@ -167,21 +148,21 @@ mod tests {
     async fn send() {
         let pool = get_pool("sender_send").await;
         let mut fns = vec![];
-        for key in 0..100 {
+        for _ in 0..100 {
             let pool = pool.clone();
             fns.push(async move {
                 let _ = Sender::new("product/1", &pool)
                     .event(&Created {
-                        name: format!("Product {key}"),
+                        name: format!("Product 1"),
                     }).unwrap()
                     .send()
                     .await;
 
                 let _ = Sender::new("product/1", &pool)
                     .original_version(1)
-                    .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key }).unwrap()
+                    .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key: 23 }).unwrap()
                     .event(&ThumbnailChanged {
-                        thumbnail: format!("product_{key}.png"),
+                        thumbnail: format!("product_1.png"),
                     }).unwrap()
                     .send()
                     .await;
@@ -189,7 +170,7 @@ mod tests {
                 let _ = Sender::new("product/1", &pool)
                     .original_version(3)
                     .event(&Edited {
-                        name: format!("Kit Ring Alarm XL {key}"),
+                        name: format!("Kit Ring Alarm XL"),
                         description:
                             "Connected wireless home alarm, security system with assisted monitoring"
                         .to_owned(),
@@ -203,7 +184,7 @@ mod tests {
 
                 let _ = Sender::new("product/1", &pool)
                     .original_version(4)
-                    .event_with_metadata(&Deleted { deleted: true }, &Metadata { key }).unwrap()
+                    .event_with_metadata(&Deleted { deleted: true }, &Metadata { key: 34 }).unwrap()
                     .send()
                     .await;
             });
@@ -223,27 +204,34 @@ mod tests {
 
         assert_eq!(events.len(), 5);
 
-        let event_1 = events.get(1).unwrap().clone();
-        let metadata: Metadata = ciborium::from_reader(&event_1.metadata.unwrap()[..]).unwrap();
-
         assert_eq!(
             ciborium::from_reader::<Created, _>(&events[0].data[..]).unwrap(),
             Created {
-                name: format!("Product {}", metadata.key)
+                name: "Product 1".to_owned(),
             }
+        );
+
+        assert_eq!(
+            ciborium::from_reader::<Metadata, _>(&events[1].metadata.clone().unwrap()[..]).unwrap(),
+            Metadata { key: 23 }
+        );
+
+        assert_eq!(
+            ciborium::from_reader::<VisibilityChanged, _>(&events[1].data[..]).unwrap(),
+            VisibilityChanged { visible: false }
         );
 
         assert_eq!(
             ciborium::from_reader::<ThumbnailChanged, _>(&events[2].data[..]).unwrap(),
             ThumbnailChanged {
-                thumbnail: format!("product_{}.png", metadata.key),
+                thumbnail: "product_1.png".to_owned(),
             }
         );
 
         assert_eq!(
             ciborium::from_reader::<Edited, _>(&events[3].data[..]).unwrap(),
             Edited {
-                name: format!("Kit Ring Alarm XL {}", metadata.key),
+                name: "Kit Ring Alarm XL".to_owned(),
                 description:
                     "Connected wireless home alarm, security system with assisted monitoring"
                         .to_owned(),
@@ -256,7 +244,12 @@ mod tests {
 
         assert_eq!(
             ciborium::from_reader::<Metadata, _>(&events[4].metadata.clone().unwrap()[..]).unwrap(),
-            Metadata { key: metadata.key }
+            Metadata { key: 34 }
+        );
+
+        assert_eq!(
+            ciborium::from_reader::<Deleted, _>(&events[4].data[..]).unwrap(),
+            Deleted { deleted: true }
         );
     }
 
