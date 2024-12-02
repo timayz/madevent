@@ -95,21 +95,17 @@ impl Sender {
                 .push_bind(metadata);
         });
 
-        if let Err(e) = qb /*.push("ON CONFLICT (aggregate, version) DO NOTHING")*/
-            .build()
-            .execute(&mut *tx)
-            .await
-        {
-            if e.to_string().contains("(code: 2067)") {
-                return Err(SenderError::InvalidOriginalVersion);
-            } else {
-                return Err(e.into());
-            }
+        let Err(e) = qb.build().execute(&mut *tx).await else {
+            tx.commit().await?;
+
+            return Ok(());
+        };
+
+        if e.to_string().contains("(code: 2067)") {
+            Err(SenderError::InvalidOriginalVersion)
+        } else {
+            Err(e.into())
         }
-
-        tx.commit().await?;
-
-        Ok(())
     }
 }
 
