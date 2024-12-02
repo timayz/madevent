@@ -248,7 +248,10 @@ mod tests {
             }
         );
 
-        println!("{:?}",rmp_serde::from_slice::<Edited>(&events[3].data).unwrap());
+        println!(
+            "{:?}",
+            rmp_serde::from_slice::<Edited>(&events[3].data).unwrap()
+        );
         println!("{:?}", events[4]);
 
         assert_eq!(
