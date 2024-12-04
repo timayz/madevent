@@ -278,7 +278,7 @@ mod tests {
 
     async fn get_pool(key: impl Into<String>) -> SqlitePool {
         let key = key.into();
-        let dsn = format!("sqlite:../target/{key}.db");
+        let dsn = format!("sqlite:../target/writer_{key}.db");
 
         install_default_drivers();
         let _ = Any::drop_database(&dsn).await;
