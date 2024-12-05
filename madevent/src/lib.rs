@@ -7,7 +7,7 @@ use ulid::Ulid;
 
 pub use event::Event;
 pub use writer::Writer;
-pub use reader::Reader;
+pub use reader::{Reader, FromCursor, ToCursor, Cursor, SqliteReader};
 
 pub struct MadEvent {
     name: String,

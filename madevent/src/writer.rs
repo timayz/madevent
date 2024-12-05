@@ -5,18 +5,16 @@ use thiserror::Error;
 use ulid::Ulid;
 
 pub struct Writer {
-    pool: SqlitePool,
     aggregate: String,
     original_version: u16,
     events: Vec<(String, Vec<u8>, Option<Vec<u8>>)>,
 }
 
 impl Writer {
-    pub fn new(aggregate: impl Into<String>, pool: &SqlitePool) -> Self {
+    pub fn new(aggregate: impl Into<String>) -> Self {
         let aggregate = aggregate.into();
 
         Self {
-            pool: pool.clone(),
             aggregate,
             events: vec![],
             original_version: 0,
@@ -76,9 +74,9 @@ impl Writer {
         Ok(self)
     }
 
-    pub async fn write(&self) -> Result<()> {
+    pub async fn write(&self, executor: &SqlitePool) -> Result<()> {
         let mut version = self.original_version.to_owned();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = executor.begin().await?;
 
         let mut qb =
             QueryBuilder::new("INSERT INTO event (id, name, aggregate, version, data, metadata) ");
@@ -138,23 +136,23 @@ mod tests {
         for _ in 0..100 {
             let pool = pool.clone();
             fns.push(async move {
-                let _ = Writer::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .event(&Created {
                         name: format!("Product 1"),
                     }).unwrap()
-                    .write()
+                    .write(&pool)
                     .await;
 
-                let _ = Writer::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .original_version(1)
                     .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key: 23 }).unwrap()
                     .event(&ThumbnailChanged {
                         thumbnail: format!("product_1.png"),
                     }).unwrap()
-                    .write()
+                    .write(&pool)
                     .await;
 
-                let _ = Writer::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .original_version(3)
                     .event(&Edited {
                         name: format!("Kit Ring Alarm XL"),
@@ -166,13 +164,13 @@ mod tests {
                         stock: 100,
                         price: 309.99,
                     }).unwrap()
-                    .write()
+                    .write(&pool)
                     .await;
 
-                let _ = Writer::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .original_version(4)
                     .event_with_metadata(&Deleted { deleted: true }, &Metadata { key: 34 }).unwrap()
-                    .write()
+                    .write(&pool)
                     .await;
             });
         }
@@ -244,20 +242,20 @@ mod tests {
     async fn invalid_original_version() {
         let pool = get_pool("sender_invalid_original_version").await;
 
-        let res = Writer::new("product/1", &pool)
+        let res = Writer::new("product/1")
             .event(&Created {
                 name: "Product 1".to_owned(),
             })
             .unwrap()
-            .write()
+            .write(&pool)
             .await;
 
         assert!(res.is_ok());
 
-        let err = Writer::new("product/1", &pool)
+        let err = Writer::new("product/1")
             .event(&VisibilityChanged { visible: false })
             .unwrap()
-            .write()
+            .write(&pool)
             .await
             .unwrap_err();
 
@@ -266,11 +264,11 @@ mod tests {
             WriterError::InvalidOriginalVersion.to_string()
         );
 
-        let res = Writer::new("product/1", &pool)
+        let res = Writer::new("product/1")
             .original_version(1)
             .event(&Deleted { deleted: true })
             .unwrap()
-            .write()
+            .write(&pool)
             .await;
 
         assert!(res.is_ok());

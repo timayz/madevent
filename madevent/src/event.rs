@@ -1,3 +1,4 @@
+use crate::{FromCursor, ToCursor};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -30,5 +31,17 @@ impl Event {
             Some(metadata) => ciborium::from_reader(&metadata[..]),
             _ => Ok(None),
         }
+    }
+}
+
+impl FromCursor for Event {
+    fn from_cursor<A>(_value: &crate::Cursor) -> A {
+        todo!()
+    }
+}
+
+impl ToCursor for Event {
+    fn to_cursor(&self) -> crate::Cursor {
+        todo!()
     }
 }
