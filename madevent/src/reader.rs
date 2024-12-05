@@ -69,12 +69,12 @@ where
         })
     }
 
-    pub async fn read<E>(&'args self, _executor: E) -> ReadResult<O>
+    pub async fn read<'a, E>(&'args self, executor: E) -> ReadResult<O>
     where
-        E: 'args + Executor<'args, Database = DB>,
+        E: 'a + Executor<'a, Database = DB>,
     {
-        //let mut query = sqlx::query_as_with::<_, O, _>(self.qb.sql(), self.args.clone());
-        //let mut rows = query.fetch_all(executor).await.unwrap();
+        let mut query = sqlx::query_as_with::<_, O, _>(self.qb.sql(), self.args.clone());
+        let mut rows = query.fetch_all(executor).await.unwrap();
         todo!()
     }
 }
@@ -165,68 +165,113 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    async fn test_read<'a, F>(
+        key: impl Into<String>,
+        get_reader: F,
+        execute: fn(result: ReadResult<Event>, events: Vec<Event>),
+    ) where
+        F: 'a + Fn(u16, Option<Cursor>) -> SqliteReader<'a, Event>,
+    {
+        let pool = init_data(key).await;
+        let events = get_events(&pool).await;
+
+            let result = get_reader(1, None).read(&pool).await;
+        for _ in 0..100 {
+            //let result = get_reader(1, None).read(&pool.to_owned()).await;
+            //execute(result, events.clone());
+        }
+    }
+
+    async fn test_read_with_filter(
+        key: impl Into<String>,
+        get_reader: fn(
+            aggregate: String,
+            limit: u16,
+            cursor: Option<Cursor>,
+        ) -> SqliteReader<'static, Event>,
+        execute: fn(result: Vec<Event>, events: Vec<Event>),
+    ) {
+        todo!()
+    }
+
     #[tokio::test]
     async fn forward() {
-        let pool = init_data("forward").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read(
+            "forward",
+            |limit, cursor| all_reader().forward(limit, cursor),
+            |result, events| assert_eq!(true, false),
+        )
+        .await
     }
 
     #[tokio::test]
     async fn forward_desc() {
-        let pool = init_data("forward_desc").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read(
+            "forward_desc",
+            |limit, cursor| all_reader().desc().forward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[tokio::test]
     async fn backward() {
-        let pool = init_data("backward").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read(
+            "backward",
+            |limit, cursor| all_reader().backward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[tokio::test]
     async fn backward_desc() {
-        let pool = init_data("backward_desc").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read(
+            "backward_desc",
+            |limit, cursor| all_reader().desc().backward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[tokio::test]
     async fn aggregate_forward() {
-        let pool = init_data("aggregate_forward").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read_with_filter(
+            "aggregate_forward",
+            |aggregate, limit, cursor| aggregate_reader(aggregate).forward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[tokio::test]
     async fn aggregate_forward_desc() {
-        let pool = init_data("aggregate_forward_desc").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read_with_filter(
+            "aggregate_forward_desc",
+            |aggregate, limit, cursor| aggregate_reader(aggregate).desc().forward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[tokio::test]
     async fn aggregate_backward() {
-        let pool = init_data("aggregate_backward").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read_with_filter(
+            "aggregate_backward",
+            |aggregate, limit, cursor| aggregate_reader(aggregate).backward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[tokio::test]
     async fn aggregate_backward_desc() {
-        let pool = init_data("aggregate_backward_desc").await;
-        let (events, user_events) = get_events(&pool).await;
-        let r_events = all_reader().read(&pool).await;
-        //sqlx::query_as::<sqlx::Sqlite, Event>("").bind()
+        test_read_with_filter(
+            "aggregate_backward_desc",
+            |aggregate, limit, cursor| aggregate_reader(aggregate).desc().backward(limit, cursor),
+            |result, events| {},
+        )
+        .await
     }
 
     #[derive(Debug, PartialEq, Deserialize, Serialize, Dummy)]
@@ -281,7 +326,7 @@ mod tests {
         pool
     }
 
-    async fn get_events(pool: &SqlitePool) -> (Vec<Event>, HashMap<String, Vec<Event>>) {
+    async fn get_events(pool: &SqlitePool) -> Vec<Event> {
         let mut event_version: HashMap<u8, u16> = HashMap::new();
 
         for _ in 0..100 {
@@ -299,11 +344,14 @@ mod tests {
             *version += 1;
         }
 
-        let events =
-            sqlx::query_as::<_, Event>("select * from event order by timestamp, version, id")
-                .fetch_all(pool)
-                .await
-                .unwrap();
+        sqlx::query_as::<_, Event>("select * from event order by timestamp, version, id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn get_user_events(pool: &SqlitePool) -> HashMap<String, Vec<Event>> {
+        let events = get_events(pool).await;
         let mut user_events: HashMap<String, Vec<Event>> = HashMap::new();
 
         for event in &events {
@@ -311,6 +359,6 @@ mod tests {
             user_event.push(event.clone());
         }
 
-        (events, user_events)
+        user_events
     }
 }
