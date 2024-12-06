@@ -967,6 +967,7 @@ dependencies = [
  "ciborium",
  "fake",
  "futures",
+ "rand",
  "serde",
  "sqlx",
  "thiserror 2.0.3",

@@ -20,4 +20,5 @@ thiserror = "2.0.3"
 tokio = "1.41.1"
 sqlx = { version = "0.8.2", features = [ "runtime-tokio", "sqlite", "any" ] }
 fake = { version = "3.0.1", features = ["derive"] }
+rand = "0.8.5"
 

@@ -14,8 +14,10 @@ where
     O: 'args + FromCursor,
 {
     qb: QueryBuilder<'args, DB>,
-    args: A,
+    qb_args: A,
     inner: PhantomData<O>,
+    order: Order,
+    args: Args,
 }
 
 impl<'args, DB, A, O> Reader<'args, DB, A, O>
@@ -29,8 +31,10 @@ where
     pub fn new(sql: impl Into<String>) -> Self {
         Self {
             qb: QueryBuilder::new(sql),
-            args: A::default(),
+            qb_args: A::default(),
             inner: PhantomData,
+            order: Order::Asc,
+            args: Default::default(),
         }
     }
 
@@ -38,30 +42,35 @@ where
     where
         Arg: 'args + Send + Encode<'args, DB> + Type<DB>,
     {
-        self.args.add(arg)?;
+        self.qb_args.add(arg)?;
         Ok(self)
     }
 
     pub fn order(mut self, value: Order) -> Self {
-        todo!()
+        self.order = value;
+
+        self
     }
 
     pub fn args(mut self, value: Args) -> Self {
-        todo!()
+        self.args = value;
+
+        self
     }
 
-    pub fn desc(mut self) -> Self {
+    pub fn desc(self) -> Self {
         self.order(Order::Desc)
     }
 
-    pub fn backward(mut self, last: u16, before: Option<Cursor>) -> Self {
+    pub fn backward(self, last: u16, before: Option<Cursor>) -> Self {
         self.args(Args {
             last: Some(last),
             before,
             ..Default::default()
         })
     }
-    pub fn forward(mut self, first: u16, after: Option<Cursor>) -> Self {
+
+    pub fn forward(self, first: u16, after: Option<Cursor>) -> Self {
         self.args(Args {
             first: Some(first),
             after,
@@ -73,8 +82,26 @@ where
     where
         E: 'a + Executor<'a, Database = DB>,
     {
-        let mut query = sqlx::query_as_with::<_, O, _>(self.qb.sql(), self.args.clone());
-        let mut rows = query.fetch_all(executor).await.unwrap();
+        let is_backward = (self.args.last.is_some() || self.args.before.is_some())
+            && self.args.first.is_none()
+            && self.args.after.is_none();
+
+        let (limit, cursor) = if is_backward {
+            (self.args.last.unwrap_or(40), self.args.before.as_ref())
+        } else {
+            (self.args.first.unwrap_or(40), self.args.after.as_ref())
+        };
+
+        if cursor.is_some() {
+            todo!()
+        }
+
+        let order = match (&self.order, is_backward) {
+            (Order::Asc, true) | (Order::Desc, false) => "DESC",
+            (Order::Asc, false) | (Order::Desc, true) => "ASC",
+        };
+        //let mut query = sqlx::query_as_with::<_, O, _>(self.qb.sql(), self.qb_args.clone());
+        //let mut rows = query.fetch_all(executor).await.unwrap();
         todo!()
     }
 }
@@ -157,6 +184,7 @@ mod tests {
         },
         Dummy, Fake, Faker,
     };
+    use rand::{seq::SliceRandom, Rng};
     use serde::{Deserialize, Serialize};
     use sqlx::{
         any::{install_default_drivers, Any},
@@ -172,14 +200,7 @@ mod tests {
     ) where
         F: 'a + Fn(u16, Option<Cursor>) -> SqliteReader<'a, Event>,
     {
-        let pool = init_data(key).await;
-        let events = get_events(&pool).await;
-
-            let result = get_reader(1, None).read(&pool).await;
-        for _ in 0..100 {
-            //let result = get_reader(1, None).read(&pool.to_owned()).await;
-            //execute(result, events.clone());
-        }
+        todo!()
     }
 
     async fn test_read_with_filter(
@@ -196,12 +217,46 @@ mod tests {
 
     #[tokio::test]
     async fn forward() {
-        test_read(
-            "forward",
-            |limit, cursor| all_reader().forward(limit, cursor),
-            |result, events| assert_eq!(true, false),
-        )
-        .await
+        let pool = init_data("forward").await.to_owned();
+        let events = get_events(&pool).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let event = events.choose(&mut rand::thread_rng());
+            let cursor = event.map(|e| e.to_cursor());
+            let limit = rand::thread_rng().gen_range(0..events.len());
+            let edges = event
+                .and_then(|e| events.iter().position(|evt| evt.id == e.id))
+                .map(|pos| {
+                    events
+                        .into_iter()
+                        .skip(pos + 1)
+                        .take(limit)
+                        .map(|node| Edge {
+                            cursor: node.to_cursor(),
+                            node,
+                        })
+                        .collect::<Vec<Edge<Event>>>()
+                })
+                .unwrap_or_default();
+
+            let result = all_reader()
+                .forward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await;
+
+            assert_eq!(
+                result,
+                ReadResult {
+                    page_info: PageInfo {
+                        has_next_page: true,
+                        end_cursor: edges.last().map(|e| e.cursor.to_owned()),
+                        ..Default::default()
+                    },
+                    edges,
+                }
+            );
+        }
     }
 
     #[tokio::test]
