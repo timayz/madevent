@@ -54,8 +54,9 @@ impl BindCursor for Event {
         O: for<'r> FromRow<'r, DB::Row>,
         O: 'a + Send + Unpin,
         O: 'a + BindCursor + ToCursor,
+        u32: sqlx::Encode<'a, DB>+sqlx::Type<DB>,
     {
-        query.bind(cursor.t).bind(cursor.v).bind(cursor.i)
+        query.bind(cursor.t)
     }
 }
 

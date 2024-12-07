@@ -53,7 +53,9 @@ pub trait BindCursor {
         DB: Database,
         O: for<'r> FromRow<'r, DB::Row>,
         O: 'a + Send + Unpin,
-        O: 'a + BindCursor + ToCursor;
+        O: 'a + BindCursor + ToCursor,
+        u32: sqlx::Encode<'a, DB>+sqlx::Type<DB>,
+        u32: sqlx::Type<DB>;
 
     fn bind_cursor<'a, DB, O>(
         &self,
@@ -65,6 +67,8 @@ pub trait BindCursor {
         O: for<'r> FromRow<'r, DB::Row>,
         O: 'a + Send + Unpin,
         O: 'a + BindCursor + ToCursor,
+        u32: sqlx::Type<DB>,
+        u32: sqlx::Encode<'a, DB>+sqlx::Type<DB>,
     {
         let engine = GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::PAD);
         let decoded = engine.decode(value).unwrap();
