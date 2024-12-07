@@ -1,13 +1,15 @@
+mod cursor;
 mod event;
-mod writer;
 mod reader;
+mod writer;
 
 use futures::{stream, Stream};
 use ulid::Ulid;
 
+pub use cursor::{BindCursor, Cursor, ToCursor};
 pub use event::Event;
+pub use reader::{Reader, SqliteReader};
 pub use writer::Writer;
-pub use reader::{Reader, FromCursor, ToCursor, Cursor, SqliteReader};
 
 pub struct MadEvent {
     name: String,
@@ -48,4 +50,3 @@ impl MadEvent {
         todo!()
     }
 }
-

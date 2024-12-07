@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use crate::{BindCursor, Cursor, ToCursor};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Arguments, Database, Encode, Executor, FromRow, IntoArguments, QueryBuilder, Type};
 use std::marker::PhantomData;
 
@@ -11,11 +12,11 @@ where
     A: Arguments<'args, Database = DB> + IntoArguments<'args, DB> + Clone,
     O: for<'r> FromRow<'r, DB::Row>,
     O: 'args + Send + Unpin,
-    O: 'args + FromCursor,
+    O: 'args + BindCursor + ToCursor,
 {
     qb: QueryBuilder<'args, DB>,
     qb_args: A,
-    inner: PhantomData<O>,
+    phantom_o: PhantomData<O>,
     order: Order,
     args: Args,
 }
@@ -26,13 +27,13 @@ where
     A: Arguments<'args, Database = DB> + IntoArguments<'args, DB> + Clone,
     O: for<'r> FromRow<'r, DB::Row>,
     O: 'args + Send + Unpin,
-    O: 'args + FromCursor,
+    O: 'args + BindCursor + ToCursor,
 {
     pub fn new(sql: impl Into<String>) -> Self {
         Self {
             qb: QueryBuilder::new(sql),
             qb_args: A::default(),
-            inner: PhantomData,
+            phantom_o: PhantomData,
             order: Order::Asc,
             args: Default::default(),
         }
@@ -106,29 +107,6 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-pub struct Cursor(pub String);
-
-impl From<String> for Cursor {
-    fn from(val: String) -> Self {
-        Self(val)
-    }
-}
-
-impl AsRef<[u8]> for Cursor {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
-
-pub trait ToCursor {
-    fn to_cursor(&self) -> Cursor;
-}
-
-pub trait FromCursor {
-    fn from_cursor<A>(value: &Cursor) -> A;
-}
-
 #[derive(Debug, Clone)]
 pub enum Order {
     Asc,
@@ -139,15 +117,6 @@ pub enum Order {
 pub struct Edge<N> {
     pub cursor: Cursor,
     pub node: N,
-}
-
-impl<N: ToCursor> From<N> for Edge<N> {
-    fn from(value: N) -> Self {
-        Self {
-            cursor: value.to_cursor(),
-            node: value,
-        }
-    }
 }
 
 #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
@@ -175,8 +144,7 @@ pub struct Args {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Event;
-    use crate::Writer;
+    use crate::{Event, Writer};
     use fake::{
         faker::{
             internet::en::{SafeEmail, Username},
@@ -223,7 +191,7 @@ mod tests {
         for _ in 0..100 {
             let events = events.clone();
             let event = events.choose(&mut rand::thread_rng());
-            let cursor = event.map(|e| e.to_cursor());
+            let cursor = event.map(|e| e.to_cursor().unwrap());
             let limit = rand::thread_rng().gen_range(0..events.len());
             let edges = event
                 .and_then(|e| events.iter().position(|evt| evt.id == e.id))
@@ -233,7 +201,7 @@ mod tests {
                         .skip(pos + 1)
                         .take(limit)
                         .map(|node| Edge {
-                            cursor: node.to_cursor(),
+                            cursor: node.to_cursor().unwrap(),
                             node,
                         })
                         .collect::<Vec<Edge<Event>>>()
