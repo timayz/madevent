@@ -44,19 +44,25 @@ impl Event {
 impl BindCursor for Event {
     type Cursor = EventCursor;
 
-    fn bind_query<'a, DB, O>(
+    fn bing_keys() -> Vec<&'static str> {
+        vec!["timestamp", "version", "id"]
+    }
+
+    fn bind_query<'q, DB>(
         &self,
         cursor: Self::Cursor,
-        query: QueryAs<DB, O, DB::Arguments<'a>>,
-    ) -> QueryAs<DB, O, DB::Arguments<'a>>
+        mut args: DB::Arguments<'q>,
+    ) -> DB::Arguments<'q>
     where
         DB: Database,
-        O: for<'r> FromRow<'r, DB::Row>,
-        O: 'a + Send + Unpin,
-        O: 'a + BindCursor + ToCursor,
-        u32: sqlx::Encode<'a, DB>+sqlx::Type<DB>,
+        u32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        u16: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
     {
-        query.bind(cursor.t)
+        args.add(cursor.t).unwrap();
+        args.add(cursor.v).unwrap();
+        args.add(cursor.i).unwrap();
+        args
     }
 }
 

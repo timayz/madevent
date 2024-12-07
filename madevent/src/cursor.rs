@@ -5,7 +5,7 @@ use base64::{
     Engine,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sqlx::{Arguments, Database, FromRow, IntoArguments, query::QueryAs};
+use sqlx::{query::QueryAs, Arguments, Database, FromRow, IntoArguments};
 
 #[derive()]
 pub enum Error {}
@@ -44,31 +44,29 @@ pub trait ToCursor {
 pub trait BindCursor {
     type Cursor: DeserializeOwned;
 
-    fn bind_query<'a, DB, O>(
+    fn bing_keys() -> Vec<&'static str>;
+
+    fn bind_query<'q, DB>(
         &self,
         cursor: Self::Cursor,
-        query: QueryAs<DB, O, DB::Arguments<'a>>,
-    ) -> QueryAs<DB, O, DB::Arguments<'a>>
+        args: DB::Arguments<'q>,
+    ) -> DB::Arguments<'q>
     where
         DB: Database,
-        O: for<'r> FromRow<'r, DB::Row>,
-        O: 'a + Send + Unpin,
-        O: 'a + BindCursor + ToCursor,
-        u32: sqlx::Encode<'a, DB>+sqlx::Type<DB>,
-        u32: sqlx::Type<DB>;
+        u32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        u16: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>;
 
-    fn bind_cursor<'a, DB, O>(
+    fn bind_cursor<'q, DB>(
         &self,
         value: &Cursor,
-        query: QueryAs<DB, O, DB::Arguments<'a>>,
-    ) -> Result<QueryAs<DB, O, DB::Arguments<'a>>, sqlx::error::BoxDynError>
+        query: DB::Arguments<'q>,
+    ) -> Result<DB::Arguments<'q>, sqlx::error::BoxDynError>
     where
         DB: Database,
-        O: for<'r> FromRow<'r, DB::Row>,
-        O: 'a + Send + Unpin,
-        O: 'a + BindCursor + ToCursor,
-        u32: sqlx::Type<DB>,
-        u32: sqlx::Encode<'a, DB>+sqlx::Type<DB>,
+        u32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        u16: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
+        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
     {
         let engine = GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::PAD);
         let decoded = engine.decode(value).unwrap();
