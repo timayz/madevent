@@ -44,26 +44,24 @@ pub trait ToCursor {
 pub trait BindCursor {
     type Cursor: DeserializeOwned;
 
-    fn bind_query<'a, DB, O, A>(
+    fn bind_query<'a, DB, O>(
         &self,
         cursor: Self::Cursor,
-        query: QueryAs<DB, O, A>,
-    ) -> Result<QueryAs<DB, O, A>, sqlx::error::BoxDynError>
+        query: QueryAs<DB, O, DB::Arguments<'a>>,
+    ) -> QueryAs<DB, O, DB::Arguments<'a>>
     where
         DB: Database,
-        A: Arguments<'a, Database = DB> + IntoArguments<'a, DB> + Clone,
         O: for<'r> FromRow<'r, DB::Row>,
         O: 'a + Send + Unpin,
         O: 'a + BindCursor + ToCursor;
 
-    fn bind_cursor<'a, DB, O, A>(
+    fn bind_cursor<'a, DB, O>(
         &self,
         value: &Cursor,
-        query: QueryAs<DB, O, A>,
-    ) -> Result<QueryAs<DB, O, A>, sqlx::error::BoxDynError>
+        query: QueryAs<DB, O, DB::Arguments<'a>>,
+    ) -> Result<QueryAs<DB, O, DB::Arguments<'a>>, sqlx::error::BoxDynError>
     where
         DB: Database,
-        A: Arguments<'a, Database = DB> + IntoArguments<'a, DB> + Clone,
         O: for<'r> FromRow<'r, DB::Row>,
         O: 'a + Send + Unpin,
         O: 'a + BindCursor + ToCursor,
@@ -72,6 +70,6 @@ pub trait BindCursor {
         let decoded = engine.decode(value).unwrap();
         let cursor = ciborium::from_reader(&decoded[..]).unwrap();
 
-        self.bind_query(cursor, query)
+        Ok(self.bind_query(cursor, query))
     }
 }

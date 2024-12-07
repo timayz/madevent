@@ -44,19 +44,18 @@ impl Event {
 impl BindCursor for Event {
     type Cursor = EventCursor;
 
-    fn bind_query<'a, DB, O, A>(
+    fn bind_query<'a, DB, O>(
         &self,
         cursor: Self::Cursor,
-        query: QueryAs<DB, O, A>,
-    ) -> Result<QueryAs<DB, O, A>, sqlx::error::BoxDynError>
+        query: QueryAs<DB, O, DB::Arguments<'a>>,
+    ) -> QueryAs<DB, O, DB::Arguments<'a>>
     where
         DB: Database,
-        A: Arguments<'a, Database = DB> + IntoArguments<'a, DB> + Clone,
         O: for<'r> FromRow<'r, DB::Row>,
         O: 'a + Send + Unpin,
         O: 'a + BindCursor + ToCursor,
     {
-        query.bind(cursor.t)?
+        query.bind(cursor.t).bind(cursor.v).bind(cursor.i)
     }
 }
 
