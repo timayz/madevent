@@ -1,6 +1,6 @@
 use crate::{BindCursor, ToCursor};
 use serde::{Deserialize, Serialize};
-use sqlx::{query::QueryAs, Arguments, Database, FromRow, IntoArguments};
+use sqlx::{query::QueryAs, Arguments, Database, Encode, FromRow, IntoArguments, Sqlite, Type};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
 pub struct Event {
@@ -41,28 +41,23 @@ impl Event {
     }
 }
 
-impl BindCursor for Event {
+impl<'q, DB: Database> BindCursor<'q, DB> for Event
+where
+    u16: Encode<'q, DB> + Type<DB>,
+    u32: Encode<'q, DB> + Type<DB>,
+    String: Encode<'q, DB> + Type<DB>,
+{
     type Cursor = EventCursor;
 
     fn bing_keys() -> Vec<&'static str> {
         vec!["timestamp", "version", "id"]
     }
 
-    fn bind_query<'q, DB>(
-        &self,
+    fn bind_query<O>(
         cursor: Self::Cursor,
-        mut args: DB::Arguments<'q>,
-    ) -> DB::Arguments<'q>
-    where
-        DB: Database,
-        u32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-        u16: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-    {
-        args.add(cursor.t).unwrap();
-        args.add(cursor.v).unwrap();
-        args.add(cursor.i).unwrap();
-        args
+        query: QueryAs<'q, DB, O, <DB as Database>::Arguments<'q>>,
+    ) -> QueryAs<'q, DB, O, <DB as Database>::Arguments<'q>> {
+        query.bind(cursor.t).bind(cursor.v).bind(cursor.i)
     }
 }
 

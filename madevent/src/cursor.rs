@@ -1,14 +1,19 @@
-use crate::Reader;
 use base64::{
     alphabet,
     engine::{general_purpose, GeneralPurpose},
     Engine,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sqlx::{query::QueryAs, Arguments, Database, FromRow, IntoArguments};
+use sqlx::{query::QueryAs, Database};
 
-#[derive()]
-pub enum Error {}
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("base64 decode: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
+
+    #[error("cbor de: {0}")]
+    CiboriumDe(#[from] ciborium::de::Error<std::io::Error>),
+}
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 pub struct Cursor(pub String);
@@ -41,37 +46,24 @@ pub trait ToCursor {
     }
 }
 
-pub trait BindCursor {
+pub trait BindCursor<'q, DB: Database> {
     type Cursor: DeserializeOwned;
 
     fn bing_keys() -> Vec<&'static str>;
 
-    fn bind_query<'q, DB>(
-        &self,
+    fn bind_query<O>(
         cursor: Self::Cursor,
-        args: DB::Arguments<'q>,
-    ) -> DB::Arguments<'q>
-    where
-        DB: Database,
-        u32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-        u16: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>;
+        query: QueryAs<'q, DB, O, DB::Arguments<'q>>,
+    ) -> QueryAs<'q, DB, O, DB::Arguments<'q>>;
 
-    fn bind_cursor<'q, DB>(
-        &self,
+    fn bind_cursor<O>(
         value: &Cursor,
-        query: DB::Arguments<'q>,
-    ) -> Result<DB::Arguments<'q>, sqlx::error::BoxDynError>
-    where
-        DB: Database,
-        u32: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-        u16: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-        String: sqlx::Encode<'q, DB> + sqlx::Type<DB>,
-    {
+        query: QueryAs<'q, DB, O, DB::Arguments<'q>>,
+    ) -> Result<QueryAs<'q, DB, O, DB::Arguments<'q>>, Error> {
         let engine = GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::PAD);
-        let decoded = engine.decode(value).unwrap();
-        let cursor = ciborium::from_reader(&decoded[..]).unwrap();
+        let decoded = engine.decode(value)?;
+        let cursor = ciborium::from_reader(&decoded[..])?;
 
-        Ok(self.bind_query(cursor, query))
+        Ok(Self::bind_query(cursor, query))
     }
 }
