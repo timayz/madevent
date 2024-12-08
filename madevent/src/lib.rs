@@ -1,13 +1,26 @@
-mod sender;
+mod cursor;
+mod event;
+mod reader;
+mod writer;
 
 use futures::{stream, Stream};
 use ulid::Ulid;
 
-pub use sender::{Event, Sender};
+pub use cursor::{BindCursor, Cursor, ToCursor};
+pub use event::Event;
+pub use reader::{Reader, SqliteReader};
+pub use writer::Writer;
 
-pub struct MadEvent;
+pub struct MadEvent {
+    name: String,
+}
 
 impl MadEvent {
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self { name }
+    }
+
     pub async fn read(
         &self,
         _aggregate_id: impl Into<String>,
@@ -33,21 +46,7 @@ impl MadEvent {
         stream::iter(vec![])
     }
 
-    pub fn aggregate(&self, _key: impl Into<String>) -> Sender {
+    pub fn aggregate(&self, _value: impl Into<String>) -> Writer {
         todo!()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use futures::StreamExt;
-
-    #[tokio::test]
-    async fn read() {
-        let madevt = MadEvent {};
-
-        let mut reader = madevt.read("test-1", 1, None).await;
-        assert_eq!(reader.next().await, None);
     }
 }

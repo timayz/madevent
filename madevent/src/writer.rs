@@ -1,22 +1,20 @@
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, QueryBuilder, SqlitePool};
+use serde::Serialize;
+use sqlx::{QueryBuilder, SqlitePool};
 use std::any::type_name;
 use thiserror::Error;
 use ulid::Ulid;
 
-pub struct Sender {
-    pool: SqlitePool,
+pub struct Writer {
     aggregate: String,
     original_version: u16,
     events: Vec<(String, Vec<u8>, Option<Vec<u8>>)>,
 }
 
-impl Sender {
-    pub fn new(aggregate: impl Into<String>, pool: &SqlitePool) -> Self {
+impl Writer {
+    pub fn new(aggregate: impl Into<String>) -> Self {
         let aggregate = aggregate.into();
 
         Self {
-            pool: pool.clone(),
             aggregate,
             events: vec![],
             original_version: 0,
@@ -76,9 +74,9 @@ impl Sender {
         Ok(self)
     }
 
-    pub async fn send(&self) -> Result<()> {
+    pub async fn write(&self, executor: &SqlitePool) -> Result<()> {
         let mut version = self.original_version.to_owned();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = executor.begin().await?;
 
         let mut qb =
             QueryBuilder::new("INSERT INTO event (id, name, aggregate, version, data, metadata) ");
@@ -102,7 +100,7 @@ impl Sender {
         };
 
         if e.to_string().contains("(code: 2067)") {
-            Err(SenderError::InvalidOriginalVersion)
+            Err(WriterError::InvalidOriginalVersion)
         } else {
             Err(e.into())
         }
@@ -110,7 +108,7 @@ impl Sender {
 }
 
 #[derive(Debug, Error)]
-pub enum SenderError {
+pub enum WriterError {
     #[error("invalid original version")]
     InvalidOriginalVersion,
 
@@ -121,23 +119,14 @@ pub enum SenderError {
     Sqlx(#[from] sqlx::Error),
 }
 
-pub type Result<E> = std::result::Result<E, SenderError>;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
-pub struct Event {
-    pub id: String,
-    pub name: String,
-    pub aggregate: String,
-    pub version: u16,
-    pub data: Vec<u8>,
-    pub metadata: Option<Vec<u8>>,
-    pub timestamp: u32,
-}
+pub type Result<E> = std::result::Result<E, WriterError>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Event;
     use futures::future::join_all;
+    use serde::Deserialize;
     use sqlx::{any::install_default_drivers, migrate::MigrateDatabase, Any};
 
     #[tokio::test]
@@ -147,23 +136,23 @@ mod tests {
         for _ in 0..100 {
             let pool = pool.clone();
             fns.push(async move {
-                let _ = Sender::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .event(&Created {
                         name: format!("Product 1"),
                     }).unwrap()
-                    .send()
+                    .write(&pool)
                     .await;
 
-                let _ = Sender::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .original_version(1)
                     .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key: 23 }).unwrap()
                     .event(&ThumbnailChanged {
                         thumbnail: format!("product_1.png"),
                     }).unwrap()
-                    .send()
+                    .write(&pool)
                     .await;
 
-                let _ = Sender::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .original_version(3)
                     .event(&Edited {
                         name: format!("Kit Ring Alarm XL"),
@@ -175,13 +164,13 @@ mod tests {
                         stock: 100,
                         price: 309.99,
                     }).unwrap()
-                    .send()
+                    .write(&pool)
                     .await;
 
-                let _ = Sender::new("product/1", &pool)
+                let _ = Writer::new("product/1")
                     .original_version(4)
                     .event_with_metadata(&Deleted { deleted: true }, &Metadata { key: 34 }).unwrap()
-                    .send()
+                    .write(&pool)
                     .await;
             });
         }
@@ -201,31 +190,31 @@ mod tests {
         assert_eq!(events.len(), 5);
 
         assert_eq!(
-            ciborium::from_reader::<Created, _>(&events[0].data[..]).unwrap(),
+            events[0].to_data::<Created>().unwrap().unwrap(),
             Created {
                 name: "Product 1".to_owned(),
             }
         );
 
         assert_eq!(
-            ciborium::from_reader::<Metadata, _>(&events[1].metadata.clone().unwrap()[..]).unwrap(),
+            events[1].to_metadata::<Metadata>().unwrap().unwrap(),
             Metadata { key: 23 }
         );
 
         assert_eq!(
-            ciborium::from_reader::<VisibilityChanged, _>(&events[1].data[..]).unwrap(),
+            events[1].to_data::<VisibilityChanged>().unwrap().unwrap(),
             VisibilityChanged { visible: false }
         );
 
         assert_eq!(
-            ciborium::from_reader::<ThumbnailChanged, _>(&events[2].data[..]).unwrap(),
+            events[2].to_data::<ThumbnailChanged>().unwrap().unwrap(),
             ThumbnailChanged {
                 thumbnail: "product_1.png".to_owned(),
             }
         );
 
         assert_eq!(
-            ciborium::from_reader::<Edited, _>(&events[3].data[..]).unwrap(),
+            events[3].to_data::<Edited>().unwrap().unwrap(),
             Edited {
                 name: "Kit Ring Alarm XL".to_owned(),
                 description:
@@ -239,12 +228,12 @@ mod tests {
         );
 
         assert_eq!(
-            ciborium::from_reader::<Metadata, _>(&events[4].metadata.clone().unwrap()[..]).unwrap(),
+            events[4].to_metadata::<Metadata>().unwrap().unwrap(),
             Metadata { key: 34 }
         );
 
         assert_eq!(
-            ciborium::from_reader::<Deleted, _>(&events[4].data[..]).unwrap(),
+            events[4].to_data::<Deleted>().unwrap().unwrap(),
             Deleted { deleted: true }
         );
     }
@@ -253,33 +242,33 @@ mod tests {
     async fn invalid_original_version() {
         let pool = get_pool("sender_invalid_original_version").await;
 
-        let res = Sender::new("product/1", &pool)
+        let res = Writer::new("product/1")
             .event(&Created {
                 name: "Product 1".to_owned(),
             })
             .unwrap()
-            .send()
+            .write(&pool)
             .await;
 
         assert!(res.is_ok());
 
-        let err = Sender::new("product/1", &pool)
+        let err = Writer::new("product/1")
             .event(&VisibilityChanged { visible: false })
             .unwrap()
-            .send()
+            .write(&pool)
             .await
             .unwrap_err();
 
         assert_eq!(
             err.to_string(),
-            SenderError::InvalidOriginalVersion.to_string()
+            WriterError::InvalidOriginalVersion.to_string()
         );
 
-        let res = Sender::new("product/1", &pool)
+        let res = Writer::new("product/1")
             .original_version(1)
             .event(&Deleted { deleted: true })
             .unwrap()
-            .send()
+            .write(&pool)
             .await;
 
         assert!(res.is_ok());
@@ -287,7 +276,7 @@ mod tests {
 
     async fn get_pool(key: impl Into<String>) -> SqlitePool {
         let key = key.into();
-        let dsn = format!("sqlite:../target/{key}.db");
+        let dsn = format!("sqlite:../target/writer_{key}.db");
 
         install_default_drivers();
         let _ = Any::drop_database(&dsn).await;
