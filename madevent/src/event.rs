@@ -1,6 +1,6 @@
 use crate::{BindCursor, ToCursor};
 use serde::{Deserialize, Serialize};
-use sqlx::{query::QueryAs, Arguments, Database, Encode, FromRow, IntoArguments, Sqlite, Type};
+use sqlx::{query::QueryAs, Database, Encode, FromRow, Type};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
 pub struct Event {

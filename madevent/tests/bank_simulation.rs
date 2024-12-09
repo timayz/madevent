@@ -6,7 +6,15 @@ use ulid::Ulid;
 #[tokio::test]
 async fn read() {
     let mut acc = Account::default();
-    acc.apply(Event{id: Default::default(), name: Default::default(), aggregate:Default::default(), version: 0, data: Default::default(), metadata: None, timestamp: 0});
+    acc.apply(Event {
+        id: Default::default(),
+        name: Default::default(),
+        aggregate: Default::default(),
+        version: 0,
+        data: Default::default(),
+        metadata: None,
+        timestamp: 0,
+    });
     assert_eq!(acc.balance, 0.0);
 }
 

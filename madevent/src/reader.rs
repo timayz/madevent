@@ -256,28 +256,6 @@ mod tests {
     };
     use std::collections::HashMap;
 
-    async fn test_read<'a, F>(
-        key: impl Into<String>,
-        get_reader: F,
-        execute: fn(result: ReadResult<Event>, events: Vec<Event>),
-    ) where
-        F: 'a + Fn(u16, Option<Cursor>) -> SqliteReader<'a, Event>,
-    {
-        todo!()
-    }
-
-    async fn test_read_with_filter(
-        key: impl Into<String>,
-        get_reader: fn(
-            aggregate: String,
-            limit: u16,
-            cursor: Option<Cursor>,
-        ) -> SqliteReader<'static, Event>,
-        execute: fn(result: Vec<Event>, events: Vec<Event>),
-    ) {
-        todo!()
-    }
-
     fn get_random_event(events: &Vec<Edge<Event>>) -> (u16, Option<Cursor>, usize) {
         let event = events.choose(&mut rand::thread_rng());
         let cursor = event.map(|e| e.cursor.to_owned());
@@ -296,6 +274,7 @@ mod tests {
         }
 
         let page_info = if is_backward {
+            edges = edges.into_iter().rev().collect();
             PageInfo {
                 has_previous_page: has_more,
                 start_cursor: edges.first().map(|e| e.cursor.to_owned()),
@@ -315,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn forward() {
         let pool = init_data("forward").await.to_owned();
-        let events = get_events(&pool).await;
+        let events = get_events(&pool, Order::Asc).await;
 
         for _ in 0..100 {
             let events = events.clone();
@@ -339,14 +318,13 @@ mod tests {
     #[tokio::test]
     async fn forward_desc() {
         let pool = init_data("forward_desc").await.to_owned();
-        let events = get_events(&pool).await;
+        let events = get_events(&pool, Order::Desc).await;
 
         for _ in 0..100 {
             let events = events.clone();
             let (limit, cursor, pos) = get_random_event(&events);
             let edges = events
                 .into_iter()
-                .rev()
                 .skip(pos + 1)
                 .take(limit as usize + 1)
                 .collect::<Vec<_>>();
@@ -364,62 +342,153 @@ mod tests {
 
     #[tokio::test]
     async fn backward() {
-        test_read(
-            "backward",
-            |limit, cursor| all_reader().backward(limit, cursor),
-            |result, events| {},
-        )
-        .await
+        let pool = init_data("backward").await.to_owned();
+        let events = get_events(&pool, Order::Desc).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let (limit, cursor, pos) = get_random_event(&events);
+            let edges = events
+                .into_iter()
+                .skip(pos + 1)
+                .take(limit as usize + 1)
+                .collect::<Vec<_>>();
+
+            let result = all_reader()
+                .backward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await
+                .unwrap();
+
+            test_result(result, edges, true);
+        }
     }
 
     #[tokio::test]
     async fn backward_desc() {
-        test_read(
-            "backward_desc",
-            |limit, cursor| all_reader().desc().backward(limit, cursor),
-            |result, events| {},
-        )
-        .await
+        let pool = init_data("backward_desc").await.to_owned();
+        let events = get_events(&pool, Order::Asc).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let (limit, cursor, pos) = get_random_event(&events);
+            let edges = events
+                .into_iter()
+                .skip(pos + 1)
+                .take(limit as usize + 1)
+                .collect::<Vec<_>>();
+
+            let result = all_reader()
+                .desc()
+                .backward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await
+                .unwrap();
+
+            test_result(result, edges, true);
+        }
     }
 
     #[tokio::test]
     async fn aggregate_forward() {
-        test_read_with_filter(
-            "aggregate_forward",
-            |aggregate, limit, cursor| aggregate_reader(aggregate).forward(limit, cursor),
-            |result, events| {},
-        )
-        .await
+        let pool = init_data("aggregate_forward").await.to_owned();
+        let events = get_events(&pool, Order::Asc).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let (id, events) = get_user_events(&events).await;
+            let (limit, cursor, pos) = get_random_event(&events);
+            let edges = events
+                .into_iter()
+                .skip(pos + 1)
+                .take(limit as usize + 1)
+                .collect::<Vec<_>>();
+
+            let result = aggregate_reader(id)
+                .forward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await
+                .unwrap();
+
+            test_result(result, edges, false);
+        }
     }
 
     #[tokio::test]
     async fn aggregate_forward_desc() {
-        test_read_with_filter(
-            "aggregate_forward_desc",
-            |aggregate, limit, cursor| aggregate_reader(aggregate).desc().forward(limit, cursor),
-            |result, events| {},
-        )
-        .await
+        let pool = init_data("aggregate_forward_desc").await.to_owned();
+        let events = get_events(&pool, Order::Desc).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let (id, events) = get_user_events(&events).await;
+            let (limit, cursor, pos) = get_random_event(&events);
+            let edges = events
+                .into_iter()
+                .skip(pos + 1)
+                .take(limit as usize + 1)
+                .collect::<Vec<_>>();
+
+            let result = aggregate_reader(id)
+                .desc()
+                .forward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await
+                .unwrap();
+
+            test_result(result, edges, false);
+        }
     }
 
     #[tokio::test]
     async fn aggregate_backward() {
-        test_read_with_filter(
-            "aggregate_backward",
-            |aggregate, limit, cursor| aggregate_reader(aggregate).backward(limit, cursor),
-            |result, events| {},
-        )
-        .await
+        let pool = init_data("aggregate_backward").await.to_owned();
+        let events = get_events(&pool, Order::Desc).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let (id, events) = get_user_events(&events).await;
+            let (limit, cursor, pos) = get_random_event(&events);
+            let edges = events
+                .into_iter()
+                .skip(pos + 1)
+                .take(limit as usize + 1)
+                .collect::<Vec<_>>();
+
+            let result = aggregate_reader(id)
+                .backward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await
+                .unwrap();
+
+            test_result(result, edges, true);
+        }
     }
 
     #[tokio::test]
     async fn aggregate_backward_desc() {
-        test_read_with_filter(
-            "aggregate_backward_desc",
-            |aggregate, limit, cursor| aggregate_reader(aggregate).desc().backward(limit, cursor),
-            |result, events| {},
-        )
-        .await
+        let pool = init_data("aggregate_backward_desc").await.to_owned();
+        let events = get_events(&pool, Order::Asc).await;
+
+        for _ in 0..100 {
+            let events = events.clone();
+            let (id, events) = get_user_events(&events).await;
+            let (limit, cursor, pos) = get_random_event(&events);
+            let edges = events
+                .into_iter()
+                .skip(pos + 1)
+                .take(limit as usize + 1)
+                .collect::<Vec<_>>();
+
+            let result = aggregate_reader(id)
+                .desc()
+                .backward(limit.try_into().unwrap(), cursor)
+                .read(&pool.to_owned())
+                .await
+                .unwrap();
+
+            test_result(result, edges, true);
+        }
     }
 
     #[derive(Debug, PartialEq, Deserialize, Serialize, Dummy)]
@@ -474,8 +543,12 @@ mod tests {
         pool
     }
 
-    async fn get_events(pool: &SqlitePool) -> Vec<Edge<Event>> {
+    async fn get_events(pool: &SqlitePool, order: Order) -> Vec<Edge<Event>> {
         let mut event_version: HashMap<u8, u16> = HashMap::new();
+        let order = match order {
+            Order::Asc => "ASC",
+            Order::Desc => "DESC",
+        };
 
         for _ in 0..100 {
             let user: User = Faker.fake();
@@ -492,29 +565,28 @@ mod tests {
             *version += 1;
         }
 
-        sqlx::query_as::<_, Event>("select * from event order by timestamp, version, id")
-            .fetch_all(pool)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|node| Edge {
-                cursor: node.to_cursor().unwrap(),
-                node,
-            })
-            .collect::<Vec<_>>()
+        sqlx::query_as::<_, Event>(&format!(
+            "select * from event order by timestamp {order}, version {order}, id {order}"
+        ))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|node| Edge {
+            cursor: node.to_cursor().unwrap(),
+            node,
+        })
+        .collect::<Vec<_>>()
     }
 
-    async fn get_user_events(pool: &SqlitePool) -> HashMap<String, Vec<Edge<Event>>> {
-        let events = get_events(pool).await;
-        let mut user_events: HashMap<String, Vec<Edge<Event>>> = HashMap::new();
+    async fn get_user_events(events: &Vec<Edge<Event>>) -> (String, Vec<Edge<Event>>) {
+        let user: User = Faker.fake();
+        let events = events
+            .clone()
+            .into_iter()
+            .filter(|e| e.node.aggregate == format!("user/{}", user.id))
+            .collect();
 
-        for event in &events {
-            let user_event = user_events
-                .entry(event.node.aggregate.to_owned())
-                .or_default();
-            user_event.push(event.clone());
-        }
-
-        user_events
+        (format!("user/{}", user.id), events)
     }
 }

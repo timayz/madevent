@@ -11,6 +11,7 @@ pub use event::Event;
 pub use reader::{Reader, SqliteReader};
 pub use writer::Writer;
 
+#[allow(dead_code)]
 pub struct MadEvent {
     name: String,
 }
