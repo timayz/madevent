@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Arguments, Database, Encode, Executor, FromRow, IntoArguments, QueryBuilder, Type};
 use std::marker::PhantomData;
 
-pub type SqliteReader<'args, O> = Reader<'args, sqlx::Sqlite, O>;
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("cursor: {0}")]
@@ -255,6 +253,8 @@ mod tests {
         SqlitePool,
     };
     use std::collections::HashMap;
+
+    type SqliteReader<'args, O> = Reader<'args, sqlx::Sqlite, O>;
 
     fn get_random_event(events: &Vec<Edge<Event>>) -> (u16, Option<Cursor>, usize) {
         let event = events.choose(&mut rand::thread_rng());

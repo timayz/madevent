@@ -8,7 +8,8 @@ use ulid::Ulid;
 
 pub use cursor::{BindCursor, Cursor, ToCursor};
 pub use event::Event;
-pub use reader::{Reader, SqliteReader};
+pub type SqliteReader<'args, O> = Reader<'args, sqlx::Sqlite, O>;
+pub use reader::Reader;
 pub use writer::Writer;
 
 #[allow(dead_code)]
