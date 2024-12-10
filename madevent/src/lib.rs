@@ -3,17 +3,13 @@ mod event;
 mod reader;
 mod writer;
 
-use futures::{stream, Stream};
-use ulid::Ulid;
+//use futures::{stream, Stream};
 
-pub use cursor::{BindCursor, Cursor, ToCursor};
+pub use cursor::{BindCursor, Cursor, Query, ToCursor};
 pub use event::Event;
-pub type SqliteReader<'args, O> = Reader<'args, sqlx::Sqlite, O>;
-pub use reader::Reader;
 pub use writer::Writer;
 
-#[allow(dead_code)]
-pub struct MadEvent {
+/*pub struct MadEvent {
     name: String,
 }
 
@@ -27,7 +23,7 @@ impl MadEvent {
         &self,
         _aggregate_id: impl Into<String>,
         _first: u16,
-        _after: Option<Ulid>,
+        _after: Option<Cursor>,
     ) -> impl Stream<Item = Event> {
         stream::iter(vec![])
     }
@@ -51,4 +47,4 @@ impl MadEvent {
     pub fn aggregate(&self, _value: impl Into<String>) -> Writer {
         todo!()
     }
-}
+}*/
