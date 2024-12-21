@@ -1,13 +1,13 @@
 mod cursor;
 mod event;
-mod reader;
-mod writer;
+mod consumer;
+mod producer;
 
 //use futures::{stream, Stream};
 
 pub use cursor::{BindCursor, Cursor, Query, ToCursor};
 pub use event::Event;
-pub use writer::Writer;
+pub use producer::Producer;
 
 /*pub struct MadEvent {
     name: String,
