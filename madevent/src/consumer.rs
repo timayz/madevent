@@ -29,25 +29,25 @@ mod tests {
 
     #[tokio::test]
     async fn stream() {
-        let reader = Consumer::stream("non-persistent://*/article").unwrap();
+        let consumer = Consumer::stream("non-persistent://*/article").unwrap();
         todo!()
     }
 
     #[tokio::test]
     async fn stream_use_ns() {
-        let reader = Consumer::stream("non-persistent://eu-west-1/article").unwrap();
+        let consumer = Consumer::stream("non-persistent://eu-west-1/article").unwrap();
         todo!()
     }
 
     #[tokio::test]
     async fn stream_persistent() {
-        let reader = Consumer::stream("persistent://*/article").unwrap();
+        let consumer = Consumer::stream("persistent://*/article").unwrap();
         todo!()
     }
 
     #[tokio::test]
     async fn stream_use_ns_persistent() {
-        let reader = Consumer::stream("persistent://eu-west-1/article").unwrap();
+        let consumer = Consumer::stream("persistent://eu-west-1/article").unwrap();
         todo!()
     }
 }
