@@ -616,12 +616,12 @@ mod tests {
         for _ in 0..100 {
             let user: User = Faker.fake();
             let version = event_version.entry(user.id).or_default();
-            let writer =
-                Producer::new(format!("user/{}", user.id)).original_version(version.to_owned());
+            let producer =
+                Producer::new("user", user.id.to_string()).original_version(version.to_owned());
             let writer = match user.evt_rand {
-                0 => writer.event::<UsermameChanged>(&Faker.fake()),
-                1 => writer.event::<DisplayNameChanged>(&Faker.fake()),
-                2 => writer.event::<EmailChanged>(&Faker.fake()),
+                0 => producer.event::<UsermameChanged>(&Faker.fake()),
+                1 => producer.event::<DisplayNameChanged>(&Faker.fake()),
+                2 => producer.event::<EmailChanged>(&Faker.fake()),
                 _ => unreachable!(),
             };
             writer.unwrap().publish(pool).await.unwrap();
@@ -647,9 +647,9 @@ mod tests {
         let events = events
             .clone()
             .into_iter()
-            .filter(|e| e.node.aggregate == format!("user/{}", user.id))
+            .filter(|e| e.node.aggregate == user.id.to_string())
             .collect();
 
-        (format!("user/{}", user.id), events)
+        (user.id.to_string(), events)
     }
 }

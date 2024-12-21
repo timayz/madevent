@@ -5,16 +5,19 @@ use thiserror::Error;
 use ulid::Ulid;
 
 pub struct Producer {
+    topic: String,
     aggregate: String,
     original_version: u16,
     events: Vec<(String, Vec<u8>, Option<Vec<u8>>)>,
 }
 
 impl Producer {
-    pub fn new(aggregate: impl Into<String>) -> Self {
+    pub fn new(topic: impl Into<String>, aggregate: impl Into<String>) -> Self {
+        let topic = topic.into();
         let aggregate = aggregate.into();
 
         Self {
+            topic,
             aggregate,
             events: vec![],
             original_version: 0,
@@ -79,7 +82,7 @@ impl Producer {
         let mut tx = executor.begin().await?;
 
         let mut qb =
-            QueryBuilder::new("INSERT INTO event (id, name, aggregate, version, data, metadata) ");
+            QueryBuilder::new("INSERT INTO event (id, name, topic, aggregate, version, data, metadata) ");
 
         qb.push_values(&self.events, |mut b, (name, data, metadata)| {
             version += 1;
@@ -87,6 +90,7 @@ impl Producer {
             let id = Ulid::new().to_string();
             b.push_bind(id)
                 .push_bind(name)
+                .push_bind(self.topic.to_owned())
                 .push_bind(self.aggregate.to_owned())
                 .push_bind(version)
                 .push_bind(data)
@@ -136,14 +140,14 @@ mod tests {
         for _ in 0..100 {
             let pool = pool.clone();
             fns.push(async move {
-                let _ = Producer::new("product/1")
+                let _ = Producer::new("product", "1")
                     .event(&Created {
                         name: format!("Product 1"),
                     }).unwrap()
                     .publish(&pool)
                     .await;
 
-                let _ = Producer::new("product/1")
+                let _ = Producer::new("product", "1")
                     .original_version(1)
                     .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key: 23 }).unwrap()
                     .event(&ThumbnailChanged {
@@ -152,7 +156,7 @@ mod tests {
                     .publish(&pool)
                     .await;
 
-                let _ = Producer::new("product/1")
+                let _ = Producer::new("product", "1")
                     .original_version(3)
                     .event(&Edited {
                         name: format!("Kit Ring Alarm XL"),
@@ -167,7 +171,7 @@ mod tests {
                     .publish(&pool)
                     .await;
 
-                let _ = Producer::new("product/1")
+                let _ = Producer::new("product", "1")
                     .original_version(4)
                     .event_with_metadata(&Deleted { deleted: true }, &Metadata { key: 34 }).unwrap()
                     .publish(&pool)
@@ -242,7 +246,7 @@ mod tests {
     async fn invalid_original_version() {
         let pool = get_pool("sender_invalid_original_version").await;
 
-        let res = Producer::new("product/1")
+        let res = Producer::new("product", "1")
             .event(&Created {
                 name: "Product 1".to_owned(),
             })
@@ -252,7 +256,7 @@ mod tests {
 
         assert!(res.is_ok());
 
-        let err = Producer::new("product/1")
+        let err = Producer::new("product", "1")
             .event(&VisibilityChanged { visible: false })
             .unwrap()
             .publish(&pool)
@@ -264,7 +268,7 @@ mod tests {
             ProducerError::InvalidOriginalVersion.to_string()
         );
 
-        let res = Producer::new("product/1")
+        let res = Producer::new("product", "1")
             .original_version(1)
             .event(&Deleted { deleted: true })
             .unwrap()
