@@ -300,7 +300,7 @@ pub struct Args {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Event, Writer};
+    use crate::{Event, Producer};
     use fake::{
         faker::{
             internet::en::{SafeEmail, Username},
@@ -617,14 +617,14 @@ mod tests {
             let user: User = Faker.fake();
             let version = event_version.entry(user.id).or_default();
             let writer =
-                Writer::new(format!("user/{}", user.id)).original_version(version.to_owned());
+                Producer::new(format!("user/{}", user.id)).original_version(version.to_owned());
             let writer = match user.evt_rand {
                 0 => writer.event::<UsermameChanged>(&Faker.fake()),
                 1 => writer.event::<DisplayNameChanged>(&Faker.fake()),
                 2 => writer.event::<EmailChanged>(&Faker.fake()),
                 _ => unreachable!(),
             };
-            writer.unwrap().write(pool).await.unwrap();
+            writer.unwrap().publish(pool).await.unwrap();
             *version += 1;
         }
 

@@ -4,13 +4,13 @@ use std::any::type_name;
 use thiserror::Error;
 use ulid::Ulid;
 
-pub struct Writer {
+pub struct Producer {
     aggregate: String,
     original_version: u16,
     events: Vec<(String, Vec<u8>, Option<Vec<u8>>)>,
 }
 
-impl Writer {
+impl Producer {
     pub fn new(aggregate: impl Into<String>) -> Self {
         let aggregate = aggregate.into();
 
@@ -74,7 +74,7 @@ impl Writer {
         Ok(self)
     }
 
-    pub async fn write(&self, executor: &SqlitePool) -> Result<()> {
+    pub async fn publish(&self, executor: &SqlitePool) -> Result<()> {
         let mut version = self.original_version.to_owned();
         let mut tx = executor.begin().await?;
 
@@ -100,7 +100,7 @@ impl Writer {
         };
 
         if e.to_string().contains("(code: 2067)") {
-            Err(WriterError::InvalidOriginalVersion)
+            Err(ProducerError::InvalidOriginalVersion)
         } else {
             Err(e.into())
         }
@@ -108,7 +108,7 @@ impl Writer {
 }
 
 #[derive(Debug, Error)]
-pub enum WriterError {
+pub enum ProducerError {
     #[error("invalid original version")]
     InvalidOriginalVersion,
 
@@ -119,7 +119,7 @@ pub enum WriterError {
     Sqlx(#[from] sqlx::Error),
 }
 
-pub type Result<E> = std::result::Result<E, WriterError>;
+pub type Result<E> = std::result::Result<E, ProducerError>;
 
 #[cfg(test)]
 mod tests {
@@ -130,29 +130,29 @@ mod tests {
     use sqlx::{any::install_default_drivers, migrate::MigrateDatabase, Any};
 
     #[tokio::test]
-    async fn send() {
+    async fn publish() {
         let pool = get_pool("sender_send").await;
         let mut fns = vec![];
         for _ in 0..100 {
             let pool = pool.clone();
             fns.push(async move {
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("product/1")
                     .event(&Created {
                         name: format!("Product 1"),
                     }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
 
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("product/1")
                     .original_version(1)
                     .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key: 23 }).unwrap()
                     .event(&ThumbnailChanged {
                         thumbnail: format!("product_1.png"),
                     }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
 
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("product/1")
                     .original_version(3)
                     .event(&Edited {
                         name: format!("Kit Ring Alarm XL"),
@@ -164,13 +164,13 @@ mod tests {
                         stock: 100,
                         price: 309.99,
                     }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
 
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("product/1")
                     .original_version(4)
                     .event_with_metadata(&Deleted { deleted: true }, &Metadata { key: 34 }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
             });
         }
@@ -242,33 +242,33 @@ mod tests {
     async fn invalid_original_version() {
         let pool = get_pool("sender_invalid_original_version").await;
 
-        let res = Writer::new("product/1")
+        let res = Producer::new("product/1")
             .event(&Created {
                 name: "Product 1".to_owned(),
             })
             .unwrap()
-            .write(&pool)
+            .publish(&pool)
             .await;
 
         assert!(res.is_ok());
 
-        let err = Writer::new("product/1")
+        let err = Producer::new("product/1")
             .event(&VisibilityChanged { visible: false })
             .unwrap()
-            .write(&pool)
+            .publish(&pool)
             .await
             .unwrap_err();
 
         assert_eq!(
             err.to_string(),
-            WriterError::InvalidOriginalVersion.to_string()
+            ProducerError::InvalidOriginalVersion.to_string()
         );
 
-        let res = Writer::new("product/1")
+        let res = Producer::new("product/1")
             .original_version(1)
             .event(&Deleted { deleted: true })
             .unwrap()
-            .write(&pool)
+            .publish(&pool)
             .await;
 
         assert!(res.is_ok());
