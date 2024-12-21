@@ -1,11 +1,10 @@
 use crate::Event;
-use url::Url;
 use futures::{stream, Stream};
 use thiserror::Error;
+use url::Url;
 
 #[derive(Debug, Error)]
 pub enum ConsumerError {
-
     #[error("url: {0}")]
     Url(#[from] url::ParseError),
 }
@@ -16,7 +15,6 @@ pub struct Consumer {
 }
 
 impl Consumer {
-
     pub fn stream(filter: impl Into<String>) -> Result<impl Stream<Item = Event>, ConsumerError> {
         let filter = Url::parse(&filter.into())?;
         Ok(stream::iter(vec![]))

@@ -9,6 +9,7 @@ async fn read() {
     acc.apply(Event {
         id: Default::default(),
         name: Default::default(),
+        topic: Default::default(),
         aggregate: Default::default(),
         version: 0,
         data: Default::default(),
