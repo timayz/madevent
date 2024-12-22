@@ -135,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn publish() {
-        let pool = get_pool("sender_send").await;
+        let pool = get_pool("producer_publish").await;
         let mut fns = vec![];
         for _ in 0..100 {
             let pool = pool.clone();
@@ -244,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_original_version() {
-        let pool = get_pool("sender_invalid_original_version").await;
+        let pool = get_pool("producer_invalid_original_version").await;
 
         let res = Producer::new("product", "1")
             .event(&Created {
@@ -280,7 +280,7 @@ mod tests {
 
     async fn get_pool(key: impl Into<String>) -> SqlitePool {
         let key = key.into();
-        let dsn = format!("sqlite:../target/writer_{key}.db");
+        let dsn = format!("sqlite:../target/producer_{key}.db");
 
         install_default_drivers();
         let _ = Any::drop_database(&dsn).await;
