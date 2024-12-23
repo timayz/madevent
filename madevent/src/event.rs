@@ -6,11 +6,12 @@ use sqlx::{query::QueryAs, Database, Encode, FromRow, Type};
 pub struct Event {
     pub id: String,
     pub name: String,
-    pub topic: String,
     pub aggregate: String,
     pub version: u16,
     pub data: Vec<u8>,
     pub metadata: Option<Vec<u8>>,
+    pub topic: String,
+    pub tenant: Option<String>,
     pub timestamp: u32,
 }
 
