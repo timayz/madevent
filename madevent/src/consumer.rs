@@ -1,5 +1,6 @@
 use crate::Event;
 use futures::{stream, Stream};
+use sqlx::SqlitePool;
 use thiserror::Error;
 use url::Url;
 
@@ -18,7 +19,10 @@ pub struct Consumer {
 }
 
 impl Consumer {
-    pub fn stream(filter: impl Into<String>) -> Result<impl Stream<Item = Event>, ConsumerError> {
+    pub fn stream(
+        filter: impl Into<String>,
+        executor: &SqlitePool,
+    ) -> Result<impl Stream<Item = Event>, ConsumerError> {
         let url = Url::parse(&filter.into())?;
         let persistent = match url.scheme() {
             "persistent" => true,
@@ -41,6 +45,7 @@ mod tests {
         },
         Dummy, Fake, Faker,
     };
+    use futures::stream::{self, StreamExt};
     use rand::{seq::SliceRandom, Rng};
     use serde::{Deserialize, Serialize};
     use sqlx::{
@@ -52,25 +57,28 @@ mod tests {
 
     #[tokio::test]
     async fn stream_all_non_persistent() {
-        let consumer = Consumer::stream("non-persistent://*/article").unwrap();
-        todo!()
+        let pool = init_data("stream_all_non_persistent").await;
+        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "non-persistent://*/user").await;
     }
 
     #[tokio::test]
     async fn stream_non_persistent() {
-        let consumer = Consumer::stream("non-persistent://eu-west-1/article").unwrap();
+        let pool = init_data("stream_non_persistent").await;
+        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "non-persistent://default/user").await;
         todo!()
     }
 
     #[tokio::test]
     async fn stream_all_persistent() {
-        let consumer = Consumer::stream("persistent://*/article").unwrap();
+        let pool = init_data("stream_all_persistent").await;
+        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "persistent://*/user").await;
         todo!()
     }
 
     #[tokio::test]
     async fn stream_persistent() {
-        let consumer = Consumer::stream("persistent://eu-west-1/article").unwrap();
+        let pool = init_data("stream_persistent").await;
+        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "persistent://default/user").await;
         todo!()
     }
 
@@ -122,8 +130,10 @@ mod tests {
             let user: User = Faker.fake();
             let group: User = Faker.fake();
             let version = event_version.entry(user.id).or_default();
-            let producer =
-                Producer::new(format!("group-{}/user", group.id), user.id.to_string()).original_version(version.to_owned());
+            let producer = Producer::new(user.id.to_string())
+                .tenant(format!("group-{}", group.id))
+                .topic("user")
+                .original_version(version.to_owned());
             let writer = match user.evt_rand {
                 0 => producer.event::<UsermameChanged>(&Faker.fake()),
                 1 => producer.event::<DisplayNameChanged>(&Faker.fake()),
@@ -142,14 +152,39 @@ mod tests {
         .unwrap()
     }
 
-    async fn get_topic_events(events: &Vec<Event>) -> (String, Vec<Event>) {
+    async fn get_consumer_events(filter: impl Into<String>, pool: &SqlitePool) -> Vec<Event> {
+        let mut events = vec![];
+        let mut consumer = Consumer::stream(filter, pool).unwrap();
+
+        while let Some(event) = consumer.next().await {
+            events.push(event);
+        }
+
+        events
+    }
+
+    async fn generate_events(
+        pool: &SqlitePool,
+        filter: impl Into<String>,
+    ) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
+        let filter = filter.into();
+        let events_1 = get_events(&pool).await;
+        let consumer_events_1 = get_consumer_events(&filter, &pool).await;
+        let events_2 = get_events(&pool).await;
+        let consumer_events_2 = get_consumer_events(&filter, &pool).await;
+
+        (events_1, consumer_events_1, events_2, consumer_events_2)
+    }
+
+    async fn get_tenant_events(events: &Vec<Event>) -> (String, Vec<Event>) {
         let group: User = Faker.fake();
+        let tenant = format!("group-{}", group.id);
         let events = events
             .clone()
             .into_iter()
-            .filter(|e| e.topic == group.id.to_string())
+            .filter(|e| e.tenant.as_ref() == Some(&tenant))
             .collect();
 
-        (group.id.to_string(), events)
+        (tenant, events)
     }
 }

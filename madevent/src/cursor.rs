@@ -616,8 +616,9 @@ mod tests {
         for _ in 0..100 {
             let user: User = Faker.fake();
             let version = event_version.entry(user.id).or_default();
-            let producer =
-                Producer::new("user", user.id.to_string()).original_version(version.to_owned());
+            let producer = Producer::new(user.id.to_string())
+                .topic("user")
+                .original_version(version.to_owned());
             let writer = match user.evt_rand {
                 0 => producer.event::<UsermameChanged>(&Faker.fake()),
                 1 => producer.event::<DisplayNameChanged>(&Faker.fake()),
