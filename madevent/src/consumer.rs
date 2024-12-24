@@ -45,8 +45,7 @@ mod tests {
         },
         Dummy, Fake, Faker,
     };
-    use futures::stream::{self, StreamExt};
-    use rand::{seq::SliceRandom, Rng};
+    use futures::StreamExt;
     use serde::{Deserialize, Serialize};
     use sqlx::{
         any::{install_default_drivers, Any},
@@ -58,27 +57,28 @@ mod tests {
     #[tokio::test]
     async fn stream_all_non_persistent() {
         let pool = init_data("stream_all_non_persistent").await;
-        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "non-persistent://*/user").await;
+        let (events, c_events) = generate_events(&pool, "non-persistent://*/user").await;
+        todo!()
     }
 
     #[tokio::test]
     async fn stream_non_persistent() {
         let pool = init_data("stream_non_persistent").await;
-        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "non-persistent://default/user").await;
+        let (events, c_events) = generate_events(&pool, "non-persistent://default/user").await;
         todo!()
     }
 
     #[tokio::test]
     async fn stream_all_persistent() {
         let pool = init_data("stream_all_persistent").await;
-        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "persistent://*/user").await;
+        let (events, c_events) = generate_events(&pool, "persistent://*/user").await;
         todo!()
     }
 
     #[tokio::test]
     async fn stream_persistent() {
         let pool = init_data("stream_persistent").await;
-        let (a_1, b_1, a_2, b_2) = generate_events(&pool, "persistent://default/user").await;
+        let (events, c_events) = generate_events(&pool, "persistent://default/user").await;
         todo!()
     }
 
@@ -152,28 +152,29 @@ mod tests {
         .unwrap()
     }
 
-    async fn get_consumer_events(filter: impl Into<String>, pool: &SqlitePool) -> Vec<Event> {
-        let mut events = vec![];
-        let mut consumer = Consumer::stream(filter, pool).unwrap();
-
-        while let Some(event) = consumer.next().await {
-            events.push(event);
-        }
-
-        events
-    }
-
     async fn generate_events(
         pool: &SqlitePool,
         filter: impl Into<String>,
-    ) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
+    ) -> (Vec<Event>, Vec<Event>) {
         let filter = filter.into();
-        let events_1 = get_events(&pool).await;
-        let consumer_events_1 = get_consumer_events(&filter, &pool).await;
-        let events_2 = get_events(&pool).await;
-        let consumer_events_2 = get_consumer_events(&filter, &pool).await;
+        let mut events = get_events(&pool).await;
 
-        (events_1, consumer_events_1, events_2, consumer_events_2)
+        let c_pool = pool.clone();
+        let consumer_events = tokio::spawn(async move {
+            let mut consumer = Consumer::stream(filter, &c_pool).unwrap();
+            let mut consumer_events = vec![];
+
+            while let Some(event) = consumer.next().await {
+                consumer_events.push(event);
+            }
+            consumer_events
+        })
+        .await
+        .unwrap();
+
+        events.extend(get_events(&pool).await);
+
+        (events, consumer_events)
     }
 
     async fn get_tenant_events(events: &Vec<Event>) -> (String, Vec<Event>) {
