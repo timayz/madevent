@@ -1,6 +1,7 @@
-use crate::Event;
+use crate::{Cursor, Event, Query};
 use futures::{stream, Stream};
-use sqlx::SqlitePool;
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, SqlitePool};
 use thiserror::Error;
 use url::Url;
 
@@ -9,28 +10,75 @@ pub enum ConsumerError {
     #[error("url: {0}")]
     Url(#[from] url::ParseError),
 
+    #[error("sqlx: {0}")]
+    Sqlx(#[from] sqlx::Error),
+
+    #[error("cursor: {0}")]
+    Cursor(#[from] crate::cursor::Error),
+
     #[error("bad scheme: must be persistent or non-persistent")]
     BadScheme,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
 pub struct Consumer {
-    path: String,
-    persistent: bool,
+    pub id: String,
+    pub cursor: String,
 }
 
 impl Consumer {
-    pub fn stream(
+    pub async fn stream(
+        id: impl Into<String>,
         filter: impl Into<String>,
         executor: &SqlitePool,
     ) -> Result<impl Stream<Item = Event>, ConsumerError> {
         let url = Url::parse(&filter.into())?;
-        let persistent = match url.scheme() {
-            "persistent" => true,
-            "non-persistent" => false,
+        let id = id.into();
+        let cursor = match url.scheme() {
+            "persistent" => {
+                sqlx::query_as::<_, (String,)>("SELECT cursor FROM consumer WHERE id = ? LIMIT 1")
+                    .bind(id)
+                    .fetch_optional(executor)
+                    .await?
+                    .map(|c| Cursor(c.0))
+            }
+            "non-persistent" => Query::<_, Event>::new("SELECT * FROM event")
+                .backward(1, None)
+                .query(executor)
+                .await?
+                .edges
+                .first()
+                .map(|e| e.cursor.clone()),
             _ => return Err(ConsumerError::BadScheme),
         };
         let filter = format!("{}{}", url.host_str().unwrap_or_default(), url.path());
-        Ok(stream::iter(vec![]))
+        Ok(stream::unfold((filter, cursor, executor.clone()), {
+            |(filter, cursor, executor)| async move {
+                let mut interval = tokio::time::interval_at(
+                    tokio::time::Instant::now(),
+                    tokio::time::Duration::from_millis(150),
+                );
+                loop {
+
+                    let Ok(res) = Query::<_, Event>::new("SELECT * FROM event")
+                        .forward(1, cursor.clone())
+                        .query(&executor.clone())
+                        .await
+                    else {
+                        return None;
+                    };
+
+                    if let Some(edge) = res.edges.first() {
+                        return Some((
+                            edge.node.clone(),
+                            (filter, Some(edge.cursor.clone()), executor),
+                        ));
+                    }
+
+                    interval.tick().await;
+                }
+            }
+        }))
     }
 }
 
@@ -59,7 +107,7 @@ mod tests {
     async fn stream_all_non_persistent() {
         let pool = init_data("stream_all_non_persistent").await;
         let (_, b, c) = generate_events(&pool, "non-persistent://*/user").await;
-
+assert_eq!(b.len(), c.len());
         assert_eq!(b, c);
     }
 
@@ -185,9 +233,12 @@ mod tests {
 
         let c_pool = pool.clone();
         let c = tokio::spawn(async move {
-            let mut consumer = Consumer::stream(filter, &c_pool).unwrap();
+            let consumer = Consumer::stream("consumer-1", filter, &c_pool)
+                .await
+                .unwrap();
             let mut events = vec![];
 
+            tokio::pin!(consumer);
             while let Ok(Some(event)) = timeout(Duration::from_secs(2), consumer.next()).await {
                 events.push(event);
             }

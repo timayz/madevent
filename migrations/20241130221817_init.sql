@@ -23,3 +23,9 @@ AS
   SELECT tenant, topic, COUNT(*)
   FROM event
   GROUP BY tenant,topic;
+
+CREATE TABLE consumer (
+    id  TEXT PRIMARY KEY,
+    cursor TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
