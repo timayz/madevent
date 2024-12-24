@@ -37,7 +37,7 @@ impl Consumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Event, Producer};
+    use crate::{Event, Producer, Query};
     use fake::{
         faker::{
             internet::en::{SafeEmail, Username},
@@ -53,33 +53,49 @@ mod tests {
         SqlitePool,
     };
     use std::collections::HashMap;
+    use tokio::time::{timeout, Duration};
 
     #[tokio::test]
     async fn stream_all_non_persistent() {
         let pool = init_data("stream_all_non_persistent").await;
-        let (events, c_events) = generate_events(&pool, "non-persistent://*/user").await;
-        todo!()
+        let (_, b, c) = generate_events(&pool, "non-persistent://*/user").await;
+
+        assert_eq!(b, c);
     }
 
     #[tokio::test]
     async fn stream_non_persistent() {
         let pool = init_data("stream_non_persistent").await;
-        let (events, c_events) = generate_events(&pool, "non-persistent://default/user").await;
-        todo!()
+        let tenant = get_tenant();
+        let (_, b, c) = generate_events(&pool, format!("non-persistent://{tenant}/user")).await;
+
+        assert_eq!(
+            get_tenant_events(&tenant, &b),
+            get_tenant_events(&tenant, &c)
+        );
     }
 
     #[tokio::test]
     async fn stream_all_persistent() {
         let pool = init_data("stream_all_persistent").await;
-        let (events, c_events) = generate_events(&pool, "persistent://*/user").await;
-        todo!()
+        let (mut a, b, c) = generate_events(&pool, "persistent://*/user").await;
+        a.extend(b);
+
+        assert_eq!(a, c)
     }
 
     #[tokio::test]
     async fn stream_persistent() {
         let pool = init_data("stream_persistent").await;
-        let (events, c_events) = generate_events(&pool, "persistent://default/user").await;
-        todo!()
+        let tenant = get_tenant();
+        let (mut a, b, c) = generate_events(&pool, format!("persistent://{tenant}/user")).await;
+
+        a.extend(b);
+
+        assert_eq!(
+            get_tenant_events(&tenant, &a),
+            get_tenant_events(&tenant, &c)
+        )
     }
 
     #[derive(Debug, PartialEq, Deserialize, Serialize, Dummy)]
@@ -123,8 +139,15 @@ mod tests {
         pool
     }
 
-    async fn get_events(pool: &SqlitePool) -> Vec<Event> {
-        let mut event_version: HashMap<u8, u16> = HashMap::new();
+    async fn get_events(pool: &SqlitePool, event_version: &mut HashMap<u8, u16>) -> Vec<Event> {
+        let cursor = Query::<_, Event>::new("SELECT * FROM event")
+            .backward(1, None)
+            .query(pool)
+            .await
+            .unwrap()
+            .edges
+            .first()
+            .map(|e| e.cursor.clone());
 
         for _ in 0..100 {
             let user: User = Faker.fake();
@@ -144,48 +167,52 @@ mod tests {
             *version += 1;
         }
 
-        sqlx::query_as::<_, Event>(&format!(
-            "select * from event order by timestamp ASC, version ASC, id ASC"
-        ))
-        .fetch_all(pool)
-        .await
-        .unwrap()
+        Query::<_, Event>::new("SELECT * FROM event")
+            .forward(1000, cursor)
+            .query(pool)
+            .await
+            .map(|r| r.edges.into_iter().map(|e| e.node).collect())
+            .unwrap()
     }
 
     async fn generate_events(
         pool: &SqlitePool,
         filter: impl Into<String>,
-    ) -> (Vec<Event>, Vec<Event>) {
+    ) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
         let filter = filter.into();
-        let mut events = get_events(&pool).await;
+        let mut event_version = HashMap::new();
+        let a = get_events(&pool, &mut event_version).await;
 
         let c_pool = pool.clone();
-        let consumer_events = tokio::spawn(async move {
+        let c = tokio::spawn(async move {
             let mut consumer = Consumer::stream(filter, &c_pool).unwrap();
-            let mut consumer_events = vec![];
+            let mut events = vec![];
 
-            while let Some(event) = consumer.next().await {
-                consumer_events.push(event);
+            while let Ok(Some(event)) = timeout(Duration::from_secs(2), consumer.next()).await {
+                events.push(event);
             }
-            consumer_events
+
+            events
         })
         .await
         .unwrap();
 
-        events.extend(get_events(&pool).await);
+        let b = get_events(&pool, &mut event_version).await;
 
-        (events, consumer_events)
+        (a, b, c)
     }
 
-    async fn get_tenant_events(events: &Vec<Event>) -> (String, Vec<Event>) {
+    fn get_tenant() -> String {
         let group: User = Faker.fake();
-        let tenant = format!("group-{}", group.id);
-        let events = events
+        format!("group-{}", group.id)
+    }
+
+    fn get_tenant_events(tenant: impl Into<String>, events: &Vec<Event>) -> Vec<Event> {
+        let tenant = tenant.into();
+        events
             .clone()
             .into_iter()
             .filter(|e| e.tenant.as_ref() == Some(&tenant))
-            .collect();
-
-        (tenant, events)
+            .collect()
     }
 }
