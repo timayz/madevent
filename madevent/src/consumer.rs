@@ -2,6 +2,7 @@ use crate::{Cursor, Event, Query};
 use futures::{stream, Stream};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
+use std::collections::HashMap;
 use thiserror::Error;
 use url::Url;
 
@@ -51,16 +52,32 @@ impl Consumer {
                 .map(|e| e.cursor.clone()),
             _ => return Err(ConsumerError::BadScheme),
         };
-        let filter = format!("{}{}", url.host_str().unwrap_or_default(), url.path());
-        Ok(stream::unfold((filter, cursor, executor.clone()), {
-            |(filter, cursor, executor)| async move {
+
+        let topic = format!("{}{}", url.host_str().unwrap_or_default(), url.path());
+        let query_params = url.query_pairs().into_owned().collect::<HashMap<_, _>>();
+        let tenant = query_params.get("tenant").map(|t| t.to_string());
+
+        Ok(stream::unfold((tenant, topic, cursor, executor.clone()), {
+            |(tenant, topic, cursor, executor)| async move {
                 let mut interval = tokio::time::interval_at(
                     tokio::time::Instant::now(),
                     tokio::time::Duration::from_millis(150),
                 );
-                loop {
 
-                    let Ok(res) = Query::<_, Event>::new("SELECT * FROM event")
+                loop {
+                    let query = if let Some(tenant) = tenant.to_owned() {
+                        Query::<_, Event>::new("SELECT * FROM event WHERE tenant = ? AND topic = ?")
+                            .bind(tenant)
+                            .expect("failed to bind tenant")
+                            .bind(topic.to_owned())
+                            .expect("failed to bind topic")
+                    } else {
+                        Query::<_, Event>::new("SELECT * FROM event WHERE topic = ?")
+                            .bind(topic.to_owned())
+                            .expect("failed to bind topic")
+                    };
+
+                    let Ok(res) = query
                         .forward(1, cursor.clone())
                         .query(&executor.clone())
                         .await
@@ -71,7 +88,7 @@ impl Consumer {
                     if let Some(edge) = res.edges.first() {
                         return Some((
                             edge.node.clone(),
-                            (filter, Some(edge.cursor.clone()), executor),
+                            (tenant, topic, Some(edge.cursor.clone()), executor),
                         ));
                     }
 
@@ -101,49 +118,198 @@ mod tests {
         SqlitePool,
     };
     use std::collections::HashMap;
-    use tokio::time::{timeout, Duration};
 
     #[tokio::test]
     async fn stream_all_non_persistent() {
         let pool = init_data("stream_all_non_persistent").await;
-        let (_, b, c) = generate_events(&pool, "non-persistent://*/user").await;
-assert_eq!(b.len(), c.len());
-        assert_eq!(b, c);
+        let mut versions = HashMap::new();
+
+        get_events(&pool, &mut versions).await;
+
+        let consumer_1 = Consumer::stream("consumer-1", "non-persistent://user", &pool)
+            .await
+            .unwrap();
+
+        let consumer_2 = Consumer::stream("consumer-2", "non-persistent://user", &pool)
+            .await
+            .unwrap();
+
+        tokio::pin!(consumer_1);
+        tokio::pin!(consumer_2);
+
+        let events = get_events(&pool, &mut versions).await;
+        for event in events {
+            assert_eq!(Some(&event), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+        }
     }
 
     #[tokio::test]
     async fn stream_non_persistent() {
         let pool = init_data("stream_non_persistent").await;
+        let mut versions = HashMap::new();
         let tenant = get_tenant();
-        let (_, b, c) = generate_events(&pool, format!("non-persistent://{tenant}/user")).await;
 
-        assert_eq!(
-            get_tenant_events(&tenant, &b),
-            get_tenant_events(&tenant, &c)
-        );
+        get_events(&pool, &mut versions).await;
+
+        let consumer_1 = Consumer::stream(
+            "consumer-1",
+            format!("non-persistent://user?tenant={tenant}"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        tokio::pin!(consumer_1);
+
+        let consumer_2 = Consumer::stream(
+            "consumer-2",
+            format!("non-persistent://user?tenant={tenant}"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        tokio::pin!(consumer_2);
+
+        let events = get_events(&pool, &mut versions).await;
+        let events = get_tenant_events(&tenant, &events);
+
+        for event in events {
+            assert_eq!(Some(&event), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+        }
     }
 
     #[tokio::test]
     async fn stream_all_persistent() {
         let pool = init_data("stream_all_persistent").await;
-        let (mut a, b, c) = generate_events(&pool, "persistent://*/user").await;
-        a.extend(b);
+        let mut versions = HashMap::new();
+        get_events(&pool, &mut versions).await;
 
-        assert_eq!(a, c)
+        let consumer_1 = Consumer::stream("consumer-1", "persistent://user", &pool)
+            .await
+            .unwrap();
+
+        tokio::pin!(consumer_1);
+
+        let consumer_2 = Consumer::stream("consumer-2", "persistent://user", &pool)
+            .await
+            .unwrap();
+
+        tokio::pin!(consumer_2);
+
+        get_events(&pool, &mut versions).await;
+
+        let events = Query::<_, Event>::new("SELECT * FROM event")
+            .forward(1000, None)
+            .query(&pool)
+            .await
+            .unwrap()
+            .edges;
+
+        for event in events {
+            assert_eq!(Some(&event.node), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event.node), consumer_2.next().await.as_ref());
+        }
+
+        drop(consumer_1);
+        drop(consumer_2);
+
+        let consumer_1 = Consumer::stream("consumer-1", "persistent://user", &pool)
+            .await
+            .unwrap();
+
+        tokio::pin!(consumer_1);
+
+        let consumer_2 = Consumer::stream("consumer-2", "persistent://user", &pool)
+            .await
+            .unwrap();
+
+        tokio::pin!(consumer_2);
+
+        let events = get_events(&pool, &mut versions).await;
+        for event in events {
+            assert_eq!(Some(&event), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+        }
     }
 
     #[tokio::test]
     async fn stream_persistent() {
         let pool = init_data("stream_persistent").await;
+        let mut versions = HashMap::new();
+
+        get_events(&pool, &mut versions).await;
+
         let tenant = get_tenant();
-        let (mut a, b, c) = generate_events(&pool, format!("persistent://{tenant}/user")).await;
 
-        a.extend(b);
-
-        assert_eq!(
-            get_tenant_events(&tenant, &a),
-            get_tenant_events(&tenant, &c)
+        let consumer_1 = Consumer::stream(
+            "consumer-1",
+            format!("persistent://user?tenant={tenant}"),
+            &pool,
         )
+        .await
+        .unwrap();
+
+        tokio::pin!(consumer_1);
+
+        let consumer_2 = Consumer::stream(
+            "consumer-2",
+            format!("persistent://user?tenant={tenant}"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        tokio::pin!(consumer_2);
+
+        get_events(&pool, &mut versions).await;
+
+        let events = Query::<_, Event>::new("SELECT * FROM event")
+            .forward(1000, None)
+            .query(&pool)
+            .await
+            .unwrap()
+            .edges
+            .into_iter()
+            .map(|e| e.node)
+            .collect();
+        let events = get_tenant_events(&tenant, &events);
+
+        for event in events {
+            assert_eq!(Some(&event), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+        }
+
+        drop(consumer_1);
+        drop(consumer_2);
+
+        let consumer_1 = Consumer::stream(
+            "consumer-1",
+            format!("persistent://user?tenant={tenant}"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        tokio::pin!(consumer_1);
+
+        let consumer_2 = Consumer::stream(
+            "consumer-2",
+            format!("persistent://user?tenant={tenant}"),
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        tokio::pin!(consumer_2);
+
+        let events = get_events(&pool, &mut versions).await;
+        for event in events {
+            assert_eq!(Some(&event), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+        }
     }
 
     #[derive(Debug, PartialEq, Deserialize, Serialize, Dummy)]
@@ -221,36 +387,6 @@ assert_eq!(b.len(), c.len());
             .await
             .map(|r| r.edges.into_iter().map(|e| e.node).collect())
             .unwrap()
-    }
-
-    async fn generate_events(
-        pool: &SqlitePool,
-        filter: impl Into<String>,
-    ) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
-        let filter = filter.into();
-        let mut event_version = HashMap::new();
-        let a = get_events(&pool, &mut event_version).await;
-
-        let c_pool = pool.clone();
-        let c = tokio::spawn(async move {
-            let consumer = Consumer::stream("consumer-1", filter, &c_pool)
-                .await
-                .unwrap();
-            let mut events = vec![];
-
-            tokio::pin!(consumer);
-            while let Ok(Some(event)) = timeout(Duration::from_secs(2), consumer.next()).await {
-                events.push(event);
-            }
-
-            events
-        })
-        .await
-        .unwrap();
-
-        let b = get_events(&pool, &mut event_version).await;
-
-        (a, b, c)
     }
 
     fn get_tenant() -> String {
