@@ -30,10 +30,10 @@ pub struct Consumer {
 impl Consumer {
     pub async fn stream(
         id: impl Into<String>,
-        filter: impl Into<String>,
+        url: impl Into<String>,
         executor: &SqlitePool,
     ) -> Result<impl Stream<Item = Event>, ConsumerError> {
-        let url = Url::parse(&filter.into())?;
+        let url = Url::parse(&url.into())?;
         let id = id.into();
         let cursor = match url.scheme() {
             "persistent" => {
