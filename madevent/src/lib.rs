@@ -8,6 +8,7 @@ mod producer;
 pub use cursor::{BindCursor, Cursor, Query, ToCursor};
 pub use event::Event;
 pub use producer::Producer;
+pub use consumer::{Consumer, ConsumerError};
 
 /*pub struct MadEvent {
     name: String,
