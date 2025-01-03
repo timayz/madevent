@@ -306,6 +306,8 @@ mod tests {
         tokio::pin!(consumer_2);
 
         let events = get_events(&pool, &mut versions).await;
+        let events = get_tenant_events(&tenant, &events);
+
         for event in events {
             assert_eq!(Some(&event), consumer_1.next().await.as_ref());
             assert_eq!(Some(&event), consumer_2.next().await.as_ref());
