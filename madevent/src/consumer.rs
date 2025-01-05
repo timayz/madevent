@@ -1,4 +1,4 @@
-use crate::{Cursor, Event, Query};
+use crate::{cursor::Edge, Cursor, Event, Query, ToCursor};
 use futures::{stream, Stream};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
@@ -32,16 +32,24 @@ impl Consumer {
         id: impl Into<String>,
         url: impl Into<String>,
         executor: &SqlitePool,
-    ) -> Result<impl Stream<Item = Event>, ConsumerError> {
+    ) -> Result<impl Stream<Item = Edge<Event>>, ConsumerError> {
         let url = Url::parse(&url.into())?;
         let id = id.into();
         let cursor = match url.scheme() {
             "persistent" => {
-                sqlx::query_as::<_, (String,)>("SELECT cursor FROM consumer WHERE id = ? LIMIT 1")
-                    .bind(id)
-                    .fetch_optional(executor)
-                    .await?
-                    .map(|c| Cursor(c.0))
+                sqlx::query("INSERT OR IGNORE INTO consumer(id) VALUES (?)")
+                    .bind(&id)
+                    .execute(executor)
+                    .await?;
+
+                let cursor = sqlx::query_as::<_, (Option<String>,)>(
+                    "SELECT cursor FROM consumer WHERE id = ? LIMIT 1",
+                )
+                .bind(id)
+                .fetch_one(executor)
+                .await?;
+
+                cursor.0.map(|v| Cursor(v))
             }
             "non-persistent" => Query::<_, Event>::new("SELECT * FROM event")
                 .backward(1, None)
@@ -87,7 +95,7 @@ impl Consumer {
 
                     if let Some(edge) = res.edges.first() {
                         return Some((
-                            edge.node.clone(),
+                            edge.clone(),
                             (tenant, topic, Some(edge.cursor.clone()), executor),
                         ));
                     }
@@ -96,6 +104,32 @@ impl Consumer {
                 }
             }
         }))
+    }
+
+    pub async fn ack(
+        id: impl Into<String>,
+        cursor: impl Into<String>,
+        executor: &SqlitePool,
+    ) -> Result<(), ConsumerError> {
+        let id = id.into();
+        let cursor = cursor.into();
+
+        sqlx::query("UPDATE consumer SET cursor = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(cursor)
+            .bind(id)
+            .execute(executor)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn unack(
+        id: impl Into<String>,
+        event_id: impl Into<String>,
+        reason: impl Into<String>,
+        executor: &SqlitePool,
+    ) -> Result<(), ConsumerError> {
+        todo!()
     }
 }
 
@@ -209,8 +243,16 @@ mod tests {
             .edges;
 
         for event in events {
-            assert_eq!(Some(&event.node), consumer_1.next().await.as_ref());
-            assert_eq!(Some(&event.node), consumer_2.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_1.next().await.as_ref());
+            assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+
+            Consumer::ack("consumer-1", &event.cursor.0, &pool)
+                .await
+                .unwrap();
+
+            Consumer::ack("consumer-2", &event.cursor.0, &pool)
+                .await
+                .unwrap();
         }
 
         drop(consumer_1);
@@ -271,15 +313,21 @@ mod tests {
             .query(&pool)
             .await
             .unwrap()
-            .edges
-            .into_iter()
-            .map(|e| e.node)
-            .collect();
+            .edges;
+
         let events = get_tenant_events(&tenant, &events);
 
         for event in events {
             assert_eq!(Some(&event), consumer_1.next().await.as_ref());
             assert_eq!(Some(&event), consumer_2.next().await.as_ref());
+
+            Consumer::ack("consumer-1", &event.cursor.0, &pool)
+                .await
+                .unwrap();
+
+            Consumer::ack("consumer-2", &event.cursor.0, &pool)
+                .await
+                .unwrap();
         }
 
         drop(consumer_1);
@@ -355,7 +403,10 @@ mod tests {
         pool
     }
 
-    async fn get_events(pool: &SqlitePool, event_version: &mut HashMap<u8, u16>) -> Vec<Event> {
+    async fn get_events(
+        pool: &SqlitePool,
+        event_version: &mut HashMap<u8, u16>,
+    ) -> Vec<Edge<Event>> {
         let cursor = Query::<_, Event>::new("SELECT * FROM event")
             .backward(1, None)
             .query(pool)
@@ -387,7 +438,7 @@ mod tests {
             .forward(1000, cursor)
             .query(pool)
             .await
-            .map(|r| r.edges.into_iter().map(|e| e.node).collect())
+            .map(|r| r.edges.clone())
             .unwrap()
     }
 
@@ -396,12 +447,12 @@ mod tests {
         format!("group-{}", group.id)
     }
 
-    fn get_tenant_events(tenant: impl Into<String>, events: &Vec<Event>) -> Vec<Event> {
+    fn get_tenant_events(tenant: impl Into<String>, events: &Vec<Edge<Event>>) -> Vec<Edge<Event>> {
         let tenant = tenant.into();
         events
             .clone()
             .into_iter()
-            .filter(|e| e.tenant.as_ref() == Some(&tenant))
+            .filter(|e| e.node.tenant.as_ref() == Some(&tenant))
             .collect()
     }
 }
