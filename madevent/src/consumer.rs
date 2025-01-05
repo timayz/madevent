@@ -21,6 +21,14 @@ pub enum ConsumerError {
     BadScheme,
 }
 
+struct ConsumerStreamContext {
+    id: String,
+    worker_id: Option<String>,
+    tenant: Option<String>,
+    topic: String,
+    executor: SqlitePool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
 pub struct Consumer {
     pub id: String,
@@ -35,29 +43,41 @@ impl Consumer {
     ) -> Result<impl Stream<Item = Edge<Event>>, ConsumerError> {
         let url = Url::parse(&url.into())?;
         let id = id.into();
-        let cursor = match url.scheme() {
+        let (worker_id, cursor) = match url.scheme() {
             "persistent" => {
-                sqlx::query("INSERT OR IGNORE INTO consumer(id) VALUES (?)")
-                    .bind(&id)
-                    .execute(executor)
-                    .await?;
+                let worker_id = ulid::Ulid::new().to_string();
+
+                sqlx::query(
+                    r#"
+                    INSERT INTO consumer(id,worker_id) VALUES (?,?)
+                    ON CONFLICT(id) DO UPDATE SET worker_id=excluded.worker_id
+                    "#,
+                )
+                .bind(&id)
+                .bind(&worker_id)
+                .execute(executor)
+                .await?;
 
                 let cursor = sqlx::query_as::<_, (Option<String>,)>(
-                    "SELECT cursor FROM consumer WHERE id = ? LIMIT 1",
+                    "SELECT cursor FROM consumer WHERE id = ? AND worker_id = ? LIMIT 1",
                 )
-                .bind(id)
+                .bind(&id)
+                .bind(&worker_id)
                 .fetch_one(executor)
                 .await?;
 
-                cursor.0.map(|v| Cursor(v))
+                (Some(worker_id), cursor.0.map(|v| Cursor(v)))
             }
-            "non-persistent" => Query::<_, Event>::new("SELECT * FROM event")
-                .backward(1, None)
-                .query(executor)
-                .await?
-                .edges
-                .first()
-                .map(|e| e.cursor.clone()),
+            "non-persistent" => {
+                let cursor = Query::<_, Event>::new("SELECT * FROM event")
+                    .backward(1, None)
+                    .query(executor)
+                    .await?
+                    .edges
+                    .first()
+                    .map(|e| e.cursor.clone());
+                (None, cursor)
+            }
             _ => return Err(ConsumerError::BadScheme),
         };
 
@@ -65,45 +85,72 @@ impl Consumer {
         let query_params = url.query_pairs().into_owned().collect::<HashMap<_, _>>();
         let tenant = query_params.get("tenant").map(|t| t.to_string());
 
-        Ok(stream::unfold((tenant, topic, cursor, executor.clone()), {
-            |(tenant, topic, cursor, executor)| async move {
-                let mut interval = tokio::time::interval_at(
-                    tokio::time::Instant::now(),
-                    tokio::time::Duration::from_millis(150),
-                );
+        Ok(stream::unfold(
+            (
+                ConsumerStreamContext {
+                    tenant,
+                    worker_id,
+                    id,
+                    topic,
+                    executor: executor.clone(),
+                },
+                cursor,
+            ),
+            {
+                |(ctx, cursor)| async move {
+                    let mut interval = tokio::time::interval_at(
+                        tokio::time::Instant::now(),
+                        tokio::time::Duration::from_millis(150),
+                    );
 
-                loop {
-                    let query = if let Some(tenant) = tenant.to_owned() {
-                        Query::<_, Event>::new("SELECT * FROM event WHERE tenant = ? AND topic = ?")
+                    loop {
+                        if let Some(worker_id) = &ctx.worker_id {
+                            let Ok(res) = sqlx::query_as::<_, (String,)>(
+                                "SELECT id FROM consumer WHERE id = ? AND worker_id = ? LIMIT 1",
+                            )
+                            .bind(&ctx.id)
+                            .bind(worker_id)
+                            .fetch_optional(&ctx.executor)
+                            .await
+                            else {
+                                // @TODO: LOG ME
+                                return None;
+                            };
+
+                            if res.is_none() {
+                                return None;
+                            }
+                        }
+
+                        let query = if let Some(tenant) = ctx.tenant.to_owned() {
+                            Query::<_, Event>::new(
+                                "SELECT * FROM event WHERE tenant = ? AND topic = ?",
+                            )
                             .bind(tenant)
                             .expect("failed to bind tenant")
-                            .bind(topic.to_owned())
+                            .bind(ctx.topic.to_owned())
                             .expect("failed to bind topic")
-                    } else {
-                        Query::<_, Event>::new("SELECT * FROM event WHERE topic = ?")
-                            .bind(topic.to_owned())
-                            .expect("failed to bind topic")
-                    };
+                        } else {
+                            Query::<_, Event>::new("SELECT * FROM event WHERE topic = ?")
+                                .bind(ctx.topic.to_owned())
+                                .expect("failed to bind topic")
+                        };
 
-                    let Ok(res) = query
-                        .forward(1, cursor.clone())
-                        .query(&executor.clone())
-                        .await
-                    else {
-                        return None;
-                    };
+                        let Ok(res) = query.forward(1, cursor.clone()).query(&ctx.executor).await
+                        else {
+                            // @TODO: LOG ME
+                            return None;
+                        };
 
-                    if let Some(edge) = res.edges.first() {
-                        return Some((
-                            edge.clone(),
-                            (tenant, topic, Some(edge.cursor.clone()), executor),
-                        ));
+                        if let Some(edge) = res.edges.first() {
+                            return Some((edge.clone(), (ctx, Some(edge.cursor.clone()))));
+                        }
+
+                        interval.tick().await;
                     }
-
-                    interval.tick().await;
                 }
-            }
-        }))
+            },
+        ))
     }
 
     pub async fn ack(
