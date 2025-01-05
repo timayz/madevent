@@ -17,6 +17,7 @@ CREATE UNIQUE INDEX idx_event_topic_aggregate_version ON event(topic,aggregate,v
 
 CREATE TABLE consumer (
     id  TEXT PRIMARY KEY,
+    worker_id TEXT NOT NULL,
     cursor TEXT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NULL
