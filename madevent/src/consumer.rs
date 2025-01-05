@@ -404,6 +404,7 @@ mod tests {
         let events = get_tenant_events(&tenant, &events);
 
         for event in events {
+            // @TODO: fix random failed
             assert_eq!(Some(&event), consumer_1.next().await.as_ref());
             assert_eq!(Some(&event), consumer_2.next().await.as_ref());
         }
