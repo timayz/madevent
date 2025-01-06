@@ -4,25 +4,55 @@ use std::any::type_name;
 use thiserror::Error;
 use ulid::Ulid;
 
-pub struct Writer {
+pub struct Producer {
+    topic: String,
+    tenant: Option<String>,
+    namespace: Option<String>,
     aggregate: String,
     original_version: u16,
     events: Vec<(String, Vec<u8>, Option<Vec<u8>>)>,
 }
 
-impl Writer {
+impl Producer {
     pub fn new(aggregate: impl Into<String>) -> Self {
         let aggregate = aggregate.into();
 
         Self {
+            topic: "default".to_owned(),
+            tenant: None,
+            namespace: None,
             aggregate,
             events: vec![],
             original_version: 0,
         }
     }
 
-    pub fn original_version(mut self, original_version: u16) -> Self {
-        self.original_version = original_version;
+    pub fn topic(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+
+        self.topic = if let Some(ns) = self.namespace.as_ref() {
+            format!("{ns}/{value}")
+        } else {
+            value
+        };
+
+        self
+    }
+
+    pub fn tenant(mut self, value: impl Into<String>) -> Self {
+        self.tenant = Some(value.into());
+
+        self
+    }
+
+    pub fn namespace(mut self, value: impl Into<String>) -> Self {
+        self.namespace = Some(value.into());
+
+        self
+    }
+
+    pub fn original_version(mut self, value: u16) -> Self {
+        self.original_version = value;
 
         self
     }
@@ -74,12 +104,24 @@ impl Writer {
         Ok(self)
     }
 
-    pub async fn write(&self, executor: &SqlitePool) -> Result<()> {
+    pub async fn publish(&self, executor: &SqlitePool) -> Result<()> {
         let mut version = self.original_version.to_owned();
+
+        let tenant = sqlx::query_as::<_, (String,)>(
+            "SELECT tenant FROM event WHERE topic = ? AND aggregate = ? LIMIT 1",
+        )
+        .bind(&self.topic)
+        .bind(&self.aggregate)
+        .fetch_optional(executor)
+        .await?
+        .map(|v| v.0)
+        .or(self.tenant.to_owned());
+
         let mut tx = executor.begin().await?;
 
-        let mut qb =
-            QueryBuilder::new("INSERT INTO event (id, name, aggregate, version, data, metadata) ");
+        let mut qb = QueryBuilder::new(
+            "INSERT INTO event (id, name, aggregate, version, data, metadata, topic, tenant) ",
+        );
 
         qb.push_values(&self.events, |mut b, (name, data, metadata)| {
             version += 1;
@@ -90,7 +132,9 @@ impl Writer {
                 .push_bind(self.aggregate.to_owned())
                 .push_bind(version)
                 .push_bind(data)
-                .push_bind(metadata);
+                .push_bind(metadata)
+                .push_bind(self.topic.to_owned())
+                .push_bind(tenant.to_owned());
         });
 
         let Err(e) = qb.build().execute(&mut *tx).await else {
@@ -100,7 +144,7 @@ impl Writer {
         };
 
         if e.to_string().contains("(code: 2067)") {
-            Err(WriterError::InvalidOriginalVersion)
+            Err(ProducerError::InvalidOriginalVersion)
         } else {
             Err(e.into())
         }
@@ -108,7 +152,7 @@ impl Writer {
 }
 
 #[derive(Debug, Error)]
-pub enum WriterError {
+pub enum ProducerError {
     #[error("invalid original version")]
     InvalidOriginalVersion,
 
@@ -119,7 +163,7 @@ pub enum WriterError {
     Sqlx(#[from] sqlx::Error),
 }
 
-pub type Result<E> = std::result::Result<E, WriterError>;
+pub type Result<E> = std::result::Result<E, ProducerError>;
 
 #[cfg(test)]
 mod tests {
@@ -130,29 +174,34 @@ mod tests {
     use sqlx::{any::install_default_drivers, migrate::MigrateDatabase, Any};
 
     #[tokio::test]
-    async fn send() {
-        let pool = get_pool("sender_send").await;
+    async fn publish() {
+        let pool = get_pool("producer_publish").await;
         let mut fns = vec![];
         for _ in 0..100 {
             let pool = pool.clone();
             fns.push(async move {
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("1")
+                    .topic("product")
+                    .tenant("tenant-1")
                     .event(&Created {
                         name: format!("Product 1"),
                     }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
 
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("1")
+                    .topic("product")
+                    .tenant("tenant-2")
                     .original_version(1)
                     .event_with_metadata(&VisibilityChanged { visible: false }, &Metadata { key: 23 }).unwrap()
                     .event(&ThumbnailChanged {
                         thumbnail: format!("product_1.png"),
                     }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
 
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("1")
+                    .topic("product")
                     .original_version(3)
                     .event(&Edited {
                         name: format!("Kit Ring Alarm XL"),
@@ -164,13 +213,15 @@ mod tests {
                         stock: 100,
                         price: 309.99,
                     }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
 
-                let _ = Writer::new("product/1")
+                let _ = Producer::new("1")
+                    .topic("product")
+                    .tenant("tenant-3")
                     .original_version(4)
                     .event_with_metadata(&Deleted { deleted: true }, &Metadata { key: 34 }).unwrap()
-                    .write(&pool)
+                    .publish(&pool)
                     .await;
             });
         }
@@ -188,6 +239,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(events.len(), 5);
+
+        assert!(events
+            .iter()
+            .all(|e| e.tenant == Some("tenant-1".to_owned())));
 
         assert_eq!(
             events[0].to_data::<Created>().unwrap().unwrap(),
@@ -240,35 +295,38 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_original_version() {
-        let pool = get_pool("sender_invalid_original_version").await;
+        let pool = get_pool("producer_invalid_original_version").await;
 
-        let res = Writer::new("product/1")
+        let res = Producer::new("1")
+            .topic("product")
             .event(&Created {
                 name: "Product 1".to_owned(),
             })
             .unwrap()
-            .write(&pool)
+            .publish(&pool)
             .await;
 
         assert!(res.is_ok());
 
-        let err = Writer::new("product/1")
+        let err = Producer::new("1")
+            .topic("product")
             .event(&VisibilityChanged { visible: false })
             .unwrap()
-            .write(&pool)
+            .publish(&pool)
             .await
             .unwrap_err();
 
         assert_eq!(
             err.to_string(),
-            WriterError::InvalidOriginalVersion.to_string()
+            ProducerError::InvalidOriginalVersion.to_string()
         );
 
-        let res = Writer::new("product/1")
+        let res = Producer::new("1")
+            .topic("product")
             .original_version(1)
             .event(&Deleted { deleted: true })
             .unwrap()
-            .write(&pool)
+            .publish(&pool)
             .await;
 
         assert!(res.is_ok());
@@ -276,7 +334,7 @@ mod tests {
 
     async fn get_pool(key: impl Into<String>) -> SqlitePool {
         let key = key.into();
-        let dsn = format!("sqlite:../target/writer_{key}.db");
+        let dsn = format!("sqlite:../target/producer_{key}.db");
 
         install_default_drivers();
         let _ = Any::drop_database(&dsn).await;
