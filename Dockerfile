@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1.83-alpine AS chef
+FROM rust:1.84-alpine AS chef
 
 RUN apk add --no-cache musl-dev tzdata \
         openssl-dev openssl-libs-static \
