@@ -308,7 +308,7 @@ mod tests {
         },
         Dummy, Fake, Faker,
     };
-    use rand::{seq::SliceRandom, Rng};
+    use rand::{prelude::IndexedRandom, Rng};
     use serde::{Deserialize, Serialize};
     use sqlx::{
         any::{install_default_drivers, Any},
@@ -320,12 +320,12 @@ mod tests {
     type SqliteReader<'args, O> = Query<'args, sqlx::Sqlite, O>;
 
     fn get_random_event(events: &Vec<Edge<Event>>) -> (u16, Option<Cursor>, usize) {
-        let event = events.choose(&mut rand::thread_rng());
+        let event = events.choose(&mut rand::rng());
         let cursor = event.map(|e| e.cursor.to_owned());
         let pos = event
             .and_then(|e| events.iter().position(|evt| evt.node.id == e.node.id))
             .unwrap_or_default();
-        let limit = rand::thread_rng().gen_range(0..events.len());
+        let limit = rand::rng().random_range(0..events.len());
 
         (limit.try_into().unwrap(), cursor, pos)
     }
