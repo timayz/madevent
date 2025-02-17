@@ -10,6 +10,8 @@ pub struct Event {
     pub version: u16,
     pub data: Vec<u8>,
     pub metadata: Option<Vec<u8>>,
+    pub topic: String,
+    pub tenant: Option<String>,
     pub timestamp: u32,
 }
 
